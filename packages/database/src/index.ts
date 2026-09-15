@@ -6,6 +6,16 @@ export {
   createDatabaseClient,
   DatabaseInfrastructureError
 } from "./client";
+export {
+  DatabaseMigrationError,
+  MIGRATION_NAME_PATTERN,
+  runPendingMigrations
+} from "./migration-runner";
+export {
+  assertMigrationTargetAuthorized,
+  LiveMigrationAuthorizationError,
+  runMigrationCommand
+} from "./migration-command";
 export type {
   DatabaseConfiguration,
   DatabaseConfigurationInput,
@@ -15,7 +25,9 @@ export type {
 export type {
   DatabaseClient,
   DatabaseClientStatus,
+  DatabaseOperation,
   DatabaseInfrastructureErrorCode,
   TransactionRunner
 } from "./client";
+export type { MigrationRunReport, MigrationRunnerOptions } from "./migration-runner";
 export type { DatabaseSchema, DatabaseTransaction, KyselyDatabase } from "./kysely";

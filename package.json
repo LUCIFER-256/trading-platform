@@ -14,8 +14,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:architecture": "depcruise --validate .dependency-cruiser.cjs apps packages",
-    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && npm run check:architecture",
+    "check:migration-immutability": "node scripts/check-migration-immutability.cjs",
+    "migrate:up": "npm run build && node dist/apps/api/src/migrate.js",
+    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && node dist/tests/unit/migration-policy.test.js && node dist/tests/unit/migration-command.test.js && npm run check:architecture",
     "test:database-integration": "npm run build && node dist/tests/integration/database-health.integration.test.js",
+    "test:migrations-integration": "npm run build && node dist/tests/integration/migrations.integration.test.js",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "devDependencies": {
