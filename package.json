@@ -1,0 +1,26 @@
+{
+  "name": "trading-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "description": "Phase 1 architecture foundation for a multi-market trading platform.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check:architecture": "depcruise --validate .dependency-cruiser.cjs apps packages",
+    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && npm run check:architecture",
+    "test:database-integration": "npm run build && node dist/tests/integration/database-health.integration.test.js",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\""
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "dependency-cruiser": "16.10.0",
+    "typescript": "5.7.3"
+  }
+}

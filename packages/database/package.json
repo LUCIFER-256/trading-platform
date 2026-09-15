@@ -1,0 +1,9 @@
+{
+  "name": "@trading-platform/database",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "kysely": "0.29.5",
+    "pg": "8.23.0"
+  }
+}
