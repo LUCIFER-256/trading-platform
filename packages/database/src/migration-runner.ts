@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import * as path from "node:path";
 import type { DatabaseClient } from "./client";
 
 type MigrationStatus = "Success" | "Error" | "NotExecuted";
@@ -27,9 +28,6 @@ interface KyselyMigrationApi {
 // that subpath, so its narrow local interface is declared above.
 const migrationModuleName = "kysely" + "/migration";
 const { Migrator, FileMigrationProvider } = require(migrationModuleName) as KyselyMigrationApi;
-// Keep the Node path dependency local as the architecture policy permits only
-// filesystem infrastructure in the database package's static import graph.
-const path: { join(...paths: string[]): string } = require("node:" + "path");
 
 export const MIGRATION_NAME_PATTERN = /^\d{14}_[a-z][a-z0-9_]*$/;
 
