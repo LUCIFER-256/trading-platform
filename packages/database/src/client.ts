@@ -3,7 +3,7 @@ import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool, type PoolConfig } from "pg";
 import type { DatabaseConfigurationInput } from "./config";
 import { loadDatabaseConfiguration } from "./config";
-import type { DatabaseTransaction, KyselyDatabase } from "./kysely";
+import type { DatabaseSchema, DatabaseTransaction, KyselyDatabase } from "./kysely";
 
 export type DatabaseInfrastructureErrorCode =
   | "CONNECTION_FAILURE"
@@ -82,7 +82,7 @@ export function createDatabaseClient(
     const pool = (dependencies.createPool ?? ((options: PoolConfig) => new Pool(options)))(
       createPoolConfiguration(configuration, input.environment)
     );
-    const database = new Kysely<{}>({ dialect: new PostgresDialect({ pool }) });
+    const database = new Kysely<DatabaseSchema>({ dialect: new PostgresDialect({ pool }) });
     const client = new DatabaseClientImplementation(database, configuration);
     // node-postgres emits this for idle-client failures. The listener must not
     // throw: it records a degraded pool for later callers without attributing
