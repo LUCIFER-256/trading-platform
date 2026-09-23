@@ -78,24 +78,6 @@ No agent unilaterally decides: architecture, financial semantics, security polic
 
 Key recurring principles carried through every phase: `UNKNOWN` external order state → reconciliation, never auto-classified as failed or successful; idempotency keys on every mutating operation; fail-closed on uncertainty everywhere (market data gone → stop new decisions; broker gone → block new execution; DB failure → fail closed; risk engine unavailable → no orders; kill switch → no new orders); frontend/strategy/risk-engine/API-request are never sufficient authority for live execution — only the execution boundary, independently, is.
 
-### Phase 2.4 — Market/Instrument Catalog planning decisions
-
-Phase 2.4 establishes platform-owned catalog identities and provider-symbol mappings. It does not establish any financial instrument rules: tick size, lot/contract size, quantity/notional bounds, margin, leverage, sessions, or price/quantity precision are entirely deferred, with no nullable placeholder columns.
-
-**Identity and uniqueness**
-
-- A market has a platform-owned `market_code`: a normalized lowercase ASCII slug, unique across markets (for example, `forex`). This is the market's natural key; its generated primary key remains the relational key.
-- A provider has a platform-owned `provider_code`: a normalized lowercase ASCII slug, unique across providers (for example, `oanda`). It identifies the catalogued provider only; it is not a credential, connection, adapter, or provider-selection commitment.
-- An instrument has a platform-owned `instrument_code`, not a provider symbol. It is a normalized lowercase ASCII slug in the format `^[a-z0-9]+(?:-[a-z0-9]+)*$`; examples include `eur-usd`, `btc-usdt`, and `aapl`. Its canonical identity is the pair `(market_id, instrument_code)`, enforced as unique. The generated instrument primary key is the stable identifier referenced by the rest of the platform.
-- The provider mapping stores the provider's external symbol exactly as supplied. It is compared case-sensitively and is unique within a provider. No provider-symbol normalization, case folding, aliasing, or historical remapping is implied or performed in Phase 2.4; those require an approved provider-specific policy later.
-- The mapping table also has a unique `(provider_id, instrument_id)` constraint. The Phase 2.4 model therefore permits one current symbol for one provider/instrument pair. A future requirement for aliases or history must add explicit effective-dating/versioning rather than weakening this constraint silently.
-
-**Retirement, deletion, and selection**
-
-- Catalog records are retired by an enabled/disabled lifecycle state, not by normal hard deletion. Foreign keys from instruments to markets and from mappings to both instruments and providers use `ON DELETE RESTRICT` (equivalently, immediate no-action behavior): a referenced market, instrument, or provider cannot be deleted. This intentionally preserves catalog referential integrity and auditability.
-- Disabling a market does not mutate the enabled state of its instruments or mappings. It does, however, make every descendant instrument functionally ineligible for runtime selection through every path. A valid selection requires an enabled market, enabled instrument, and enabled provider mapping. Re-enabling a market restores eligibility only for descendants that remain individually enabled.
-- This eligibility rule controls new selection/new activity only. The behavior of existing orders or positions when an item is disabled remains deferred until those records and workflows exist.
-
 ---
 
 ## PART B — AUDIT LEDGER
@@ -156,9 +138,14 @@ PHASE 2.0      ████████████████████  COM
 PHASE 2.1      ████████████████████  COMPLETE
 PHASE 2.2      ████████████████████  APPROVED WITH CONDITIONS (execution-verified)
 PHASE 2.3      ████████████████████  COMPLETE — SIGNED OFF
-PHASE 2.4      ░░░░░░░░░░░░░░░░░░░░  NOT STARTED (Market/Instrument Catalog)
+PHASE 2.4      ████████████████████  COMPLETE — SIGNED OFF (Market/Instrument Catalog)
+PHASE 3        ░░░░░░░░░░░░░░░░░░░░  NOT STARTED (Domain Model & Financial Core)
 ```
 
-**Sprint 2.3 is done.** Next up per the phase map: Phase 2.4 — Market/Instrument Catalog (Market → Instrument → Provider symbol mapping; do not prematurely assume instrument-specific rules like tick size, lot size, or margin — those get designed deliberately when this phase starts, not guessed at now).
+**Phase 2.4 summary (commit `3bbc1a8`, on top of approved plan `16e8e1a`):** four catalog tables (`markets`, `providers`, `instruments`, `provider_instrument_symbols`) with `RESTRICT` foreign keys, natural-key uniqueness via normalized slugs, case-sensitive C-collated provider symbols, enabled/disabled lifecycle state, and `updated_at` triggers — all independently verified against real PostgreSQL 18.6. Two real defects found and fixed during review: (1) initial migration used `bigserial` IDs, contradicting the already-approved UUIDv7 decision — fixed via PostgreSQL 18's native `uuidv7()` function rather than a hand-rolled equivalent (which was also found to have a subtle entropy flaw in its random-bit sourcing, now moot); (2) the atomic/concurrent-lock integration sub-tests broke when a second, non-idempotent real migration was introduced — fixed by decoupling those structural probes from real production migrations entirely, using self-contained synthetic fixtures instead, so this class of failure can't recur as future sprints add normal migrations. Local dev environment was upgraded from PostgreSQL 16.15 to 18.6 in the process, closing a previously-deferred version-deviation item from the ledger.
+
+**Phase 2.4 explicitly deferred, not yet built:** instrument precision/tick-size/lot-size/margin/leverage (needs provider selection first), corporate-action handling, provider credentials/adapters, and the operator-facing selection UI.
+
+**Next up per the phase map: Phase 3 — Domain Model & Financial Core.** This is where the platform starts handling real financial semantics — balance, position, P&L, fees, the ledger/transaction model. Given the project's own priority order (financial correctness first), expect this phase's plan review to be the most rigorous yet.
 
 **Standing rule for every future round:** the auditor verifies claims against actual source/tests/execution output, not completion reports. A claim of "tests pass" is not accepted until this document records the actual command output that proves it.
