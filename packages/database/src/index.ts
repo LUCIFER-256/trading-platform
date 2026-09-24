@@ -16,6 +16,7 @@ export {
   LiveMigrationAuthorizationError,
   runMigrationCommand
 } from "./migration-command";
+export { postLedgerTransaction } from "./ledger";
 export type {
   DatabaseConfiguration,
   DatabaseConfigurationInput,
@@ -30,4 +31,5 @@ export type {
   TransactionRunner
 } from "./client";
 export type { MigrationRunReport, MigrationRunnerOptions } from "./migration-runner";
+export type { LedgerEntrySide, LedgerEventType, LedgerPostingFailure, LedgerPostingRequest } from "./ledger";
 export type { DatabaseSchema, DatabaseTransaction, KyselyDatabase } from "./kysely";
