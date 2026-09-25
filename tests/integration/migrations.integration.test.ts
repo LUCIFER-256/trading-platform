@@ -1,5 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import {
   createDatabaseClient,
@@ -8,6 +9,7 @@ import {
   type DatabaseClient,
   type DatabaseEnvironment
 } from "../../packages/database/src";
+import { createTestPasswordHasher } from "../../apps/api/src/auth";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -31,6 +33,14 @@ function testEnvironment(): DatabaseEnvironment {
 
 function createClient(environment: DatabaseEnvironment): DatabaseClient {
   return createDatabaseClient({ runtimeMode: "test", environment });
+}
+
+function runtimeRoleEnvironment(environment: DatabaseEnvironment): DatabaseEnvironment {
+  const url = new URL(environment.TEST_DATABASE_URL!);
+  // node-postgres passes libpq's options parameter at connection startup, so
+  // every pooled connection has the restricted role as current_user.
+  url.searchParams.set("options", "-c role=platform_runtime");
+  return { ...environment, TEST_DATABASE_URL: url.toString() };
 }
 
 async function assertRelationExists(client: DatabaseClient, name: string, expected: boolean): Promise<void> {
@@ -231,13 +241,14 @@ async function assertCatalogConstraints(client: DatabaseClient): Promise<void> {
 }
 
 interface LedgerPostingInput {
+  readonly sessionId: string;
+  readonly sessionSecret: string;
   readonly eventType: "deposit" | "withdrawal" | "manual_adjustment";
   readonly walletId: string;
   readonly assetId: string;
   readonly amount: string;
   readonly customerEntrySide: "debit" | "credit";
   readonly idempotencyKey: string;
-  readonly actorReference: string;
   readonly reason: string | null;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly occurredAt: Date;
@@ -246,8 +257,8 @@ interface LedgerPostingInput {
 async function postLedgerTransaction(client: DatabaseClient, input: LedgerPostingInput): Promise<string> {
   const result = await sql<{ readonly id: string }>`
     select platform.post_ledger_transaction(
-      ${input.eventType}, ${input.walletId}, ${input.assetId}, ${input.amount}, ${input.customerEntrySide},
-      ${input.idempotencyKey}, ${input.actorReference}, ${input.reason}, cast(${JSON.stringify(input.metadata)} as jsonb), ${input.occurredAt}
+      ${input.sessionId}, ${input.sessionSecret}, ${input.eventType}, ${input.walletId}, ${input.assetId}, ${input.amount}, ${input.customerEntrySide},
+      ${input.idempotencyKey}, ${input.reason}, cast(${JSON.stringify(input.metadata)} as jsonb), ${input.occurredAt}
     ) as id
   `.execute(client.database);
   const id = result.rows[0]?.id;
@@ -259,7 +270,8 @@ async function assertPhase3Schema(client: DatabaseClient): Promise<void> {
   const tables = [
     "platform.users", "platform.accounts", "platform.strategies", "platform.strategy_configurations",
     "platform.risk_configurations", "platform.broker_connections", "platform.assets", "platform.wallets",
-    "platform.ledger_accounts", "platform.ledger_transactions", "platform.ledger_entries", "platform.wallet_balances"
+    "platform.ledger_accounts", "platform.ledger_transactions", "platform.ledger_entries", "platform.wallet_balances",
+    "platform.password_credentials", "platform.password_credential_history", "platform.password_reset_tokens", "platform.auth_sessions", "platform.account_role_assignments", "platform.auth_bootstrap_state", "platform.audit_events"
   ];
   for (const table of tables) await assertRelationExists(client, table, true);
 
@@ -307,6 +319,15 @@ async function assertFinancialCore(client: DatabaseClient, environment: Database
   const user = await sql<{ readonly id: string }>`insert into platform.users (user_code, enabled) values (${`ledger-user-${codeNonce}`}, true) returning id`.execute(client.database);
   const userId = user.rows[0]?.id;
   assert(userId !== undefined, "User fixture must be created.");
+  const sessionSecret = `phase4-session-secret-${nonce}-with-required-length`;
+  await sql`insert into platform.password_credentials (user_id, password_hash, credential_version) values (${userId}, '$argon2id$v=19$m=1024,t=1,p=1$c2FsdA$hash', 1)`.execute(client.database);
+  await sql`insert into platform.account_role_assignments (user_id, account_id, role, enabled) values (${userId}, null, 'SUPER_ADMIN', true)`.execute(client.database);
+  const session = await sql<{ readonly id: string }>`
+    insert into platform.auth_sessions (user_id, secret_digest, credential_version, idle_expires_at, absolute_expires_at)
+    values (${userId}, ${createHash("sha256").update(sessionSecret).digest()}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') returning id
+  `.execute(client.database);
+  const sessionId = session.rows[0]?.id;
+  assert(sessionId !== undefined, "Authenticated session fixture must be created.");
   const account = await sql<{ readonly id: string }>`insert into platform.accounts (user_id, account_code, enabled) values (${userId}, ${`ledger-account-${codeNonce}`}, true) returning id`.execute(client.database);
   const accountId = account.rows[0]?.id;
   assert(accountId !== undefined, "Account fixture must be created.");
@@ -390,10 +411,12 @@ async function assertFinancialCore(client: DatabaseClient, environment: Database
   const occurredAt = new Date("2026-09-24T09:00:00.000Z");
   const deposit: LedgerPostingInput = {
     eventType: "deposit", walletId, assetId, amount: "10", customerEntrySide: "credit",
-    idempotencyKey: `deposit-${nonce}`, actorReference: "phase3-integration", reason: null, metadata: { source: "fixture" }, occurredAt
+    sessionId, sessionSecret, idempotencyKey: `deposit-${nonce}`, reason: null, metadata: { source: "fixture" }, occurredAt
   };
   const depositId = await postLedgerTransaction(client, deposit);
   assertUuidV7(depositId, "Ledger transaction must receive a UUIDv7 primary key.");
+  const derivedActor = await sql<{ readonly actor_user_id: string | null; readonly actor_session_id: string | null; readonly actor_reference: string }>`select actor_user_id, actor_session_id, actor_reference from platform.ledger_transactions where id = ${depositId}`.execute(client.database);
+  assert(derivedActor.rows[0]?.actor_user_id === userId && derivedActor.rows[0]?.actor_session_id === sessionId && derivedActor.rows[0]?.actor_reference === `user:${userId}`, "Ledger postings must persist a database-derived authenticated actor.");
   const identicalRetryId = await postLedgerTransaction(client, { ...deposit, amount: "10.000000000000000000" });
   assert(identicalRetryId === depositId, "An identical canonicalized retry must return the original transaction.");
   await assertRejected(
@@ -500,6 +523,82 @@ async function assertFinancialCore(client: DatabaseClient, environment: Database
   }
 }
 
+async function assertAuthenticationAuthorization(client: DatabaseClient, environment: DatabaseEnvironment, nonce: string): Promise<void> {
+  const hash = await createTestPasswordHasher().hash("integration-password");
+  assert(await createTestPasswordHasher().verify(hash, "integration-password"), "Argon2id must verify an actual stored hash.");
+  assert(!(await createTestPasswordHasher().verify(hash, "wrong-password")), "Argon2id must reject a wrong password.");
+  const admin = await sql<{ readonly id: string }>`insert into platform.users (user_code, enabled) values (${`auth-admin-${nonce.replace("_", "-")}`}, true) returning id`.execute(client.database);
+  const adminId = admin.rows[0]?.id; assert(adminId !== undefined, "Auth admin fixture must exist.");
+  await sql`insert into platform.password_credentials (user_id, password_hash, credential_version) values (${adminId}, ${hash}, 1)`.execute(client.database);
+  await sql`insert into platform.account_role_assignments (user_id, account_id, role) values (${adminId}, null, 'SUPER_ADMIN')`.execute(client.database);
+  const secret = `auth-session-${nonce}-sufficiently-long-secret`;
+  const created = await sql<{ readonly id: string }>`select platform.create_auth_session(${adminId}, ${secret}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') as id`.execute(client.database);
+  const sessionId = created.rows[0]?.id; assert(sessionId !== undefined, "Valid auth session must be created.");
+  const authenticated = await sql<{ readonly user_id: string }>`select user_id from platform.require_authenticated_session(${sessionId}, ${secret}, 'ledger.post.deposit', null)`.execute(client.database);
+  assert(authenticated.rows[0]?.user_id === adminId, "A valid session must authenticate its database-derived user.");
+  await assertRejected(() => sql`select * from platform.require_authenticated_session(${sessionId}, 'forged-secret-that-is-long-enough-to-parse', 'ledger.post.deposit', null)`.execute(client.database), "Forged session secrets must be rejected by PostgreSQL.");
+  await sql`select platform.revoke_auth_session(${sessionId}, 'integration')`.execute(client.database);
+  await assertRejected(() => sql`select * from platform.require_authenticated_session(${sessionId}, ${secret}, 'ledger.post.deposit', null)`.execute(client.database), "Revoked sessions must be rejected by PostgreSQL.");
+
+  const scopedUser = await sql<{ readonly id: string }>`insert into platform.users (user_code, enabled) values (${`auth-scoped-${nonce.replace("_", "-")}`}, true) returning id`.execute(client.database);
+  const scopedUserId = scopedUser.rows[0]?.id; assert(scopedUserId !== undefined, "Scoped user fixture must exist.");
+  await sql`insert into platform.password_credentials (user_id, password_hash, credential_version) values (${scopedUserId}, ${hash}, 1)`.execute(client.database);
+  const firstAccount = await sql<{ readonly id: string }>`insert into platform.accounts (user_id, account_code, enabled) values (${scopedUserId}, ${`auth-account-a-${nonce.replace("_", "-")}`}, true) returning id`.execute(client.database);
+  const secondAccount = await sql<{ readonly id: string }>`insert into platform.accounts (user_id, account_code, enabled) values (${scopedUserId}, ${`auth-account-b-${nonce.replace("_", "-")}`}, true) returning id`.execute(client.database);
+  const firstAccountId = firstAccount.rows[0]?.id; const secondAccountId = secondAccount.rows[0]?.id; assert(firstAccountId !== undefined && secondAccountId !== undefined, "Scoped account fixtures must exist.");
+  await sql`insert into platform.account_role_assignments (user_id, account_id, role) values (${scopedUserId}, ${firstAccountId}, 'AUDITOR')`.execute(client.database);
+  const scopedSecret = `scoped-session-${nonce}-sufficiently-long-secret`;
+  const scopedSession = await sql<{ readonly id: string }>`select platform.create_auth_session(${scopedUserId}, ${scopedSecret}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') as id`.execute(client.database);
+  const scopedSessionId = scopedSession.rows[0]?.id; assert(scopedSessionId !== undefined, "Scoped session must exist.");
+  await sql`select * from platform.require_authenticated_session(${scopedSessionId}, ${scopedSecret}, 'account.read', ${firstAccountId})`.execute(client.database);
+  await assertRejected(() => sql`select * from platform.require_authenticated_session(${scopedSessionId}, ${scopedSecret}, 'account.read', ${secondAccountId})`.execute(client.database), "Wrong-account scoped authorization must be rejected by PostgreSQL.");
+  const superAdminNonLedgerSession = await sql<{ readonly id: string }>`select platform.create_auth_session(${adminId}, ${`super-admin-non-ledger-${nonce}-secret`}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') as id`.execute(client.database);
+  const superAdminNonLedgerSessionId = superAdminNonLedgerSession.rows[0]?.id;
+  assert(superAdminNonLedgerSessionId !== undefined, "SUPER_ADMIN non-ledger session must exist.");
+  await assertRejected(
+    () => sql`select * from platform.require_authenticated_session(${superAdminNonLedgerSessionId}, ${`super-admin-non-ledger-${nonce}-secret`}, 'account.read', ${firstAccountId})`.execute(client.database),
+    "A global SUPER_ADMIN must not implicitly gain account-scoped non-ledger permissions."
+  );
+  await sql`update platform.account_role_assignments set enabled = false, revoked_at = current_timestamp, revoked_by_user_id = ${adminId}, revocation_reason = 'integration' where user_id = ${scopedUserId} and account_id = ${firstAccountId} and enabled`.execute(client.database);
+  await assertRejected(() => sql`select * from platform.require_authenticated_session(${scopedSessionId}, ${scopedSecret}, 'account.read', ${firstAccountId})`.execute(client.database), "Role revocation must take effect immediately.");
+  await assertRejected(() => sql`delete from platform.account_role_assignments where user_id = ${scopedUserId}`.execute(client.database), "Role assignments must reject hard deletion.");
+
+  const resetSecret = `reset-token-${nonce}-sufficiently-long-secret`;
+  const resetSession = await sql<{ readonly id: string }>`select platform.create_auth_session(${adminId}, ${`reset-admin-${nonce}-secret-sufficiently-long`}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') as id`.execute(client.database);
+  const resetSessionId = resetSession.rows[0]?.id; assert(resetSessionId !== undefined, "Reset issuer session must exist.");
+  const target = await sql<{ readonly id: string; readonly user_code: string }>`insert into platform.users (user_code, enabled) values (${`auth-reset-${nonce.replace("_", "-")}`}, true) returning id, user_code`.execute(client.database);
+  const targetId = target.rows[0]?.id; const targetCode = target.rows[0]?.user_code; assert(targetId !== undefined && targetCode !== undefined, "Reset target must exist.");
+  await sql`insert into platform.password_credentials (user_id, password_hash, credential_version) values (${targetId}, ${hash}, 1)`.execute(client.database);
+  const reset = await sql<{ readonly id: string }>`select platform.issue_password_reset(${resetSessionId}, ${`reset-admin-${nonce}-secret-sufficiently-long`}, ${targetCode}, ${resetSecret}) as id`.execute(client.database);
+  const resetId = reset.rows[0]?.id; assert(resetId !== undefined, "Reset token must be issued.");
+  await sql`update platform.password_reset_tokens set consumed_at = current_timestamp where id = ${resetId}`.execute(client.database);
+  await assertRejected(() => sql`update platform.password_reset_tokens set revoked_at = current_timestamp where id = ${resetId}`.execute(client.database), "Consumed reset tokens must be immutable.");
+  await assertRejected(() => sql`insert into platform.password_reset_tokens (user_id, token_digest, issued_by_user_id, expires_at) values (${targetId}, ${createHash("sha256").update("expired").digest()}, ${adminId}, current_timestamp - interval '1 minute')`.execute(client.database), "Expired reset tokens must be rejected by PostgreSQL.");
+
+  const lockUser = await sql<{ readonly id: string; readonly user_code: string }>`insert into platform.users (user_code, enabled) values (${`auth-lock-${nonce.replace("_", "-")}`}, true) returning id, user_code`.execute(client.database);
+  const lockCode = lockUser.rows[0]?.user_code; assert(lockCode !== undefined, "Lockout fixture must exist.");
+  await Promise.all(Array.from({ length: 5 }, () => sql`select platform.record_failed_password_login(${lockCode})`.execute(client.database)));
+  const lock = await sql<{ readonly password_login_locked_until: Date | null; readonly password_login_failed_count: number }>`select password_login_locked_until, password_login_failed_count from platform.users where user_code = ${lockCode}`.execute(client.database);
+  assert(lock.rows[0]?.password_login_failed_count === 5 && lock.rows[0]?.password_login_locked_until !== null, "Concurrent failed logins must atomically reach the lockout state.");
+  await assertRejected(() => sql`update platform.audit_events set outcome = 'failure' where event_type = 'session_created'`.execute(client.database), "Audit events must be immutable.");
+
+  const runtimeClient = createClient(runtimeRoleEnvironment(environment));
+  try {
+    const role = await sql<{ readonly current_user: string }>`select current_user as current_user`.execute(runtimeClient.database);
+    assert(role.rows[0]?.current_user === "platform_runtime", "Privilege test must run as the restricted runtime role.");
+    await assertRejected(
+      () => sql`insert into platform.ledger_transactions default values`.execute(runtimeClient.database),
+      "The restricted runtime role must not directly insert ledger transactions."
+    );
+    await assertRejected(
+      () => sql`select platform.bootstrap_first_super_admin(${`runtime-bootstrap-${nonce}`}, '$argon2id$v=19$m=1024,t=1,p=1$c2FsdA$hash')`.execute(runtimeClient.database),
+      "The restricted runtime role must not execute first-super-admin bootstrap."
+    );
+  } finally {
+    await runtimeClient.close();
+  }
+}
+
 async function main(): Promise<void> {
   log("start");
   const environment = testEnvironment();
@@ -521,7 +620,7 @@ async function main(): Promise<void> {
       migrationLockTableName: `migration_it_main_lock_${nonce}`
     });
     log(`firstRun applied=${firstRun.applied.length}`);
-    assert(firstRun.applied.length === 5, "A fresh database must apply all platform migrations.");
+    assert(firstRun.applied.length === 6, "A fresh database must apply all platform migrations.");
     await assertSchemaExists(mainClient, "platform", true);
     log("schema exists OK");
     await assertCatalogSchema(mainClient);
@@ -532,6 +631,8 @@ async function main(): Promise<void> {
     log("Phase 3 schema verified");
     await assertFinancialCore(mainClient, environment, nonce);
     log("Phase 3 financial core verified");
+    await assertAuthenticationAuthorization(mainClient, environment, nonce);
+    log("Phase 4 authentication and authorization verified");
 
     const secondRun = await runPendingMigrations(mainClient, {
       migrationFolder: migrationDirectory,

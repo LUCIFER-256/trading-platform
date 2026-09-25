@@ -17,6 +17,7 @@ export {
   runMigrationCommand
 } from "./migration-command";
 export { postLedgerTransaction } from "./ledger";
+export { sql } from "kysely";
 export type {
   DatabaseConfiguration,
   DatabaseConfigurationInput,

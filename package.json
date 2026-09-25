@@ -16,7 +16,9 @@
     "check:architecture": "depcruise --validate .dependency-cruiser.cjs apps packages",
     "check:migration-immutability": "node scripts/check-migration-immutability.cjs",
     "migrate:up": "npm run build && node dist/apps/api/src/migrate.js",
-    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && node dist/tests/unit/migration-policy.test.js && node dist/tests/unit/migration-command.test.js && npm run check:architecture",
+    "auth:issue-password-reset": "npm run build && node dist/apps/api/src/issue-password-reset.js",
+    "auth:bootstrap-super-admin": "npm run build && node dist/apps/api/src/bootstrap-super-admin.js",
+    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && node dist/tests/unit/migration-policy.test.js && node dist/tests/unit/migration-command.test.js && node dist/tests/unit/auth.test.js && npm run check:architecture",
     "test:database-integration": "npm run build && node dist/tests/integration/database-health.integration.test.js",
     "test:migrations-integration": "npm run build && node dist/tests/integration/migrations.integration.test.js",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\""
@@ -25,5 +27,8 @@
     "@types/pg": "^8.23.1",
     "dependency-cruiser": "16.10.0",
     "typescript": "5.7.3"
+  },
+  "dependencies": {
+    "argon2": "^0.45.1"
   }
 }

@@ -29,6 +29,24 @@ module.exports = {
       to: { path: "^node_modules/(pg|kysely)/" }
     },
     {
+      name: "api-may-depend-only-on-phase4-boundaries",
+      severity: "error",
+      from: { path: "^apps/api/" },
+      to: { pathNot: "^(apps/api/|packages/(core|database|shared)/|node_modules/argon2/|(node:)?(crypto|fs(?:/promises)?|path|readline|process)$)" }
+    },
+    {
+      name: "api-must-not-depend-on-domain-engines",
+      severity: "error",
+      from: { path: "^apps/api/" },
+      to: { path: "^packages/(market-data|strategies|risk|trading|portfolio|execution)/" }
+    },
+    {
+      name: "worker-must-not-depend-on-auth-or-database",
+      severity: "error",
+      from: { path: "^apps/worker/" },
+      to: { path: "^(apps/api/|packages/database/)" }
+    },
+    {
       name: "shared-must-remain-foundational",
       severity: "error",
       from: { path: "^packages/shared/" },
@@ -109,8 +127,8 @@ module.exports = {
     {
       name: "apps-must-not-depend-on-other-apps",
       severity: "error",
-      from: { path: "^apps/" },
-      to: { path: "^apps/" }
+      from: { path: "^apps/([^/]+)/" },
+      to: { path: "^apps/", pathNot: "^apps/$1/" }
     }
   ],
   options: {

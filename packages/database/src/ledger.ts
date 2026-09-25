@@ -18,7 +18,8 @@ export interface LedgerPostingRequest {
   readonly amount: DecimalString;
   readonly customerEntrySide: LedgerEntrySide;
   readonly idempotencyKey: string;
-  readonly actorReference: string;
+  readonly sessionId: string;
+  readonly sessionSecret: string;
   readonly reason: string | undefined;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly occurredAt: Date;
@@ -36,13 +37,14 @@ export async function postLedgerTransaction(
 
   const result = await sql<{ readonly id: string }>`
     select platform.post_ledger_transaction(
+      ${request.sessionId},
+      ${request.sessionSecret},
       ${request.eventType},
       ${request.walletId},
       ${request.assetId},
       ${canonicalAmount.value},
       ${request.customerEntrySide},
       ${request.idempotencyKey},
-      ${request.actorReference},
       ${request.reason},
       cast(${JSON.stringify(request.metadata)} as jsonb),
       ${request.occurredAt}
