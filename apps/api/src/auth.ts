@@ -45,9 +45,9 @@ export async function authenticateAndCreateCommandSession(
   hasher: PasswordHasher = createProductionPasswordHasher()
 ): Promise<AuthenticatedSession | undefined> {
   const row = await sql<{ readonly id: string; readonly password_hash: string; readonly credential_version: number }>`
-    select user.id, credential.password_hash, credential.credential_version
-    from platform.users user join platform.password_credentials credential on credential.user_id = user.id
-    where user.user_code = ${userCode} and user.enabled and coalesce(user.password_login_locked_until, '-infinity'::timestamptz) <= current_timestamp
+    select login_user.id, credential.password_hash, credential.credential_version
+    from platform.users login_user join platform.password_credentials credential on credential.user_id = login_user.id
+    where login_user.user_code = ${userCode} and login_user.enabled and coalesce(login_user.password_login_locked_until, '-infinity'::timestamptz) <= current_timestamp
   `.execute(database);
   const principal = row.rows[0];
   const verified = await hasher.verify(principal?.password_hash ?? UNKNOWN_USER_HASH, password);

@@ -9,7 +9,7 @@ import {
   type DatabaseClient,
   type DatabaseEnvironment
 } from "../../packages/database/src";
-import { createTestPasswordHasher } from "../../apps/api/src/auth";
+import { authenticateAndCreateSession, createTestPasswordHasher } from "../../apps/api/src/auth";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -527,10 +527,13 @@ async function assertAuthenticationAuthorization(client: DatabaseClient, environ
   const hash = await createTestPasswordHasher().hash("integration-password");
   assert(await createTestPasswordHasher().verify(hash, "integration-password"), "Argon2id must verify an actual stored hash.");
   assert(!(await createTestPasswordHasher().verify(hash, "wrong-password")), "Argon2id must reject a wrong password.");
-  const admin = await sql<{ readonly id: string }>`insert into platform.users (user_code, enabled) values (${`auth-admin-${nonce.replace("_", "-")}`}, true) returning id`.execute(client.database);
+  const adminUserCode = `auth-admin-${nonce.replace("_", "-")}`;
+  const admin = await sql<{ readonly id: string }>`insert into platform.users (user_code, enabled) values (${adminUserCode}, true) returning id`.execute(client.database);
   const adminId = admin.rows[0]?.id; assert(adminId !== undefined, "Auth admin fixture must exist.");
   await sql`insert into platform.password_credentials (user_id, password_hash, credential_version) values (${adminId}, ${hash}, 1)`.execute(client.database);
   await sql`insert into platform.account_role_assignments (user_id, account_id, role) values (${adminId}, null, 'SUPER_ADMIN')`.execute(client.database);
+  const loginSession = await authenticateAndCreateSession(client.database, adminUserCode, "integration-password", createTestPasswordHasher());
+  assert(loginSession !== undefined && loginSession.userId === adminId && loginSession.sessionId.length > 0 && loginSession.sessionSecret.length > 0, "authenticateAndCreateSession must create a valid session through real PostgreSQL.");
   const secret = `auth-session-${nonce}-sufficiently-long-secret`;
   const created = await sql<{ readonly id: string }>`select platform.create_auth_session(${adminId}, ${secret}, 1, current_timestamp + interval '30 minutes', current_timestamp + interval '8 hours') as id`.execute(client.database);
   const sessionId = created.rows[0]?.id; assert(sessionId !== undefined, "Valid auth session must be created.");
