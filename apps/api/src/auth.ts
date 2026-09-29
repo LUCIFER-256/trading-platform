@@ -38,7 +38,7 @@ export interface AuthenticatedSession {
   readonly sessionSecret: string;
 }
 
-export async function authenticateAndCreateCommandSession(
+export async function authenticateAndCreateSession(
   database: KyselyDatabase,
   userCode: string,
   password: string,
@@ -64,6 +64,9 @@ export async function authenticateAndCreateCommandSession(
   if (sessionId === undefined) throw new Error("Session creation did not return an identifier.");
   return { userId: principal.id, sessionId, sessionSecret };
 }
+
+/** Legacy CLI entry point; HTTP transport uses the same authority service. */
+export const authenticateAndCreateCommandSession = authenticateAndCreateSession;
 
 export async function revokeCommandSession(database: KyselyDatabase, sessionId: string): Promise<void> {
   await sql`select platform.revoke_auth_session(${sessionId}, 'cli_completed')`.execute(database);

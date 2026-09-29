@@ -32,7 +32,7 @@ module.exports = {
       name: "api-may-depend-only-on-phase4-boundaries",
       severity: "error",
       from: { path: "^apps/api/" },
-      to: { pathNot: "^(apps/api/|packages/(core|database|shared)/|node_modules/argon2/|(node:)?(crypto|fs(?:/promises)?|path|readline|process)$)" }
+      to: { pathNot: "^(apps/api/|packages/(core|database|shared)/|node_modules/argon2/|(node:)?(crypto|fs(?:/promises)?|path|readline|process|http)$)" }
     },
     {
       name: "api-must-not-depend-on-domain-engines",
