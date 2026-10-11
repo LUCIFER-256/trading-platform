@@ -167,6 +167,18 @@ An independent 256-bit `__Host-platform_csrf` cookie is also `Secure; SameSite=S
 
 **Explicitly deferred.** `apps/web`, WebSocket/SSE/streaming and protocol upgrades, public or third-party APIs, API keys/OAuth, public registration, self-service reset, ledger/account/trading endpoints, a cloud load balancer, and any Node-native TLS or public TCP listener remain out of scope.
 
+### Phase 5 — Market-Data Engine planning decisions (APPROVED 2026-10-11; full text in `docs/phase-5-plan.md`)
+
+**Scope.** One public, unauthenticated Coinbase Exchange spot adapter (BTC-USD and ETH-USD initially): `ticker`, `matches` and `heartbeat` over WebSocket plus REST product assertions; durable immutable observations and quality evidence; a PostgreSQL-clock effective-state view that fails closed; one active engine guarded by an advisory lock; catalog provisioning and an operator halt-clear tool. No HTTP routes, no strategy dependency, no order book, no backfill, no second provider, and no execution use of the ticker bid/ask (quote-as-of-last-trade, research only).
+
+**Approved decisions (dated 2026-10-07, re-confirmed 2026-10-11).** (1) Reconnect gaps: durable record plus automatic re-baseline; humans clear only in-session integrity halts. (2) Ticker quotes are research-only. (3) Delivery is PostgreSQL durable state plus `NOTIFY`; strategies stay database-free. (4) Dedicated writer role `platform_market_data`, never `platform_runtime`. (5) Separate `platform_catalog_provisioner`. (6) `platform_owner` only with the exact ownership/grant statements in the plan. (7) Heartbeat timeout 5,000 ms. (8) No persistence before written Coinbase terms clearance. (9) `ws@8.22.0` exact pin, subject to a recorded `npm audit`.
+
+**Approved 2026-10-11 at the recommended values.** Ingestion age 10,000 ms; event age 10,000 ms; future skew 2,000 ms; max initial event delay 5,000 ms; price jump 2,000 bp; reset tolerance 100 bp and expiry 300,000 ms; circuit 5 failures/60 s, cool-down 30 s, half-open 10 s; heartbeat-ahead rule 4 heartbeats over 2,500 ms; circuit-close settling 4 heartbeats over 3,000 ms; advisory-lock probe 1,000 ms; `maxPayload` 64 KiB; retention indefinite and unpartitioned; operator session by interactive login. **N1:** `market_data.halt.clear` joins the global-SUPER_ADMIN branch of `platform.require_authenticated_session` (a one-line Phase 4 function change, auditor-verified against the real migration). **N2:** quarantine stores normalized candidate price/size; a clear requires the typed candidate price and creates a durable, expiring, restart-surviving jump reset. **N3:** `platform_market_data_consumer` reads only the effective-state view. **G-1 to G-8** (the plan's gap register) adopted as the auditor recommended, including the new writer-only `open_market_data_halt` function.
+
+**Still open (external gates, not approved by this record).** Written Coinbase Market Data Terms clearance (only the user can obtain it); deployment-host reconfirmation of the 5,000 ms heartbeat timeout; the actual `npm audit` result for `ws@8.22.0`.
+
+**Sprints.** 5.0 approvals and legal gate; 5.1 contracts, catalog, security and **all function bodies, audited against real PostgreSQL 18.x**; 5.2 adapter and validation; 5.3 persistence and effective state; 5.4 sandbox/production read-only smoke. Nothing is implemented yet.
+
 ---
 
 ## PART B — AUDIT LEDGER
@@ -217,6 +229,35 @@ Format per entry: **Phase/Sprint | Date/round | Verdict | Findings (ID, severity
 1. **PostgreSQL version deviation** — real-database verification (Round 5) ran against locally-installed PostgreSQL 16.15; approved version is 18.x. Migration DDL/locking used is standard SQL, unlikely to differ, but not formally confirmed against 18.x. Low priority — revisit before production deployment, not before Sprint 2.4.
 2. **Sprint 2.2 carried-forward conditions** (rollback-double-failure edge case documented but see Sprint 2.2 section; degraded-state one-way recovery, documented as intentional) — both already answered, no further action needed unless requirements change.
 
+### PHASE 5 — Market-Data Engine (PLAN REVIEW)
+**Status: 🟢 PLAN APPROVED 2026-10-11 — planning only; no code, migration or execution exists yet. Implementation audits (Sprints 5.0–5.4) not started.**
+
+Eight plan-review rounds. Auditor scores in order: 5.5, 6.5, 7.5, 8, 7, 6.5, 7, 7. The scores fell after revision 4 because later revisions dropped settled content and introduced new defects; the plan was therefore assembled by the auditor from the named sources (user instruction "Option A"), designing nothing new, with a visible change list. Final text: `docs/phase-5-plan.md`.
+
+| Finding (all independently identified, not taken from reports) | Disposition |
+|---|---|
+| Gap rule based on ticker `sequence` +1 | Replaced. Spike evidence: ticker sequence deltas were never +1 (heartbeat deltas 174–2,783). Integrity now uses `matches.trade_id` +1 (an assumption, 0 breaks in 6,784 sampled matches, not a documented guarantee) and heartbeat `last_trade_id`. |
+| Write authority granted to `platform_runtime` | Replaced by dedicated roles and definer functions; runtime has no Phase 5 access. |
+| Fail-open staleness | Replaced by a database-clock effective-state view that fails closed on missing policy, NULLs, base state, stale ingestion/event, and clock anomaly. |
+| `current_timestamp` used for freshness and defaults | Confirmed frozen within a transaction by real execution on PostgreSQL 18.6; `clock_timestamp()` everywhere. |
+| Event-time CHECK double-counted microseconds (numeric `/`) | Confirmed by execution; replaced by integer `div`/`mod`, nine boundary samples round-tripped exactly on 18.6. |
+| NULL in a quality-bucket primary key | Confirmed by execution that PK columns reject NULL; surrogate key plus `UNIQUE … NULLS NOT DISTINCT`. |
+| Human halt for every reconnect gap | Option B: automatic re-baseline; human halts only for in-session violations. |
+| Price-jump clear dead-ended | Typed-price confirmation plus durable, expiring reset; first in-band tick skips the jump check; unexpired resets survive restart. |
+| Assembly manifest defects (found in round 8) | Invalid partial indexes (subquery predicates); revoke of `platform_runtime`'s Phase 4 EXECUTE on `require_authenticated_session`; fail-open view on NULLs; bucket guard that either blocked its own writer or was vacuous inside a definer function; ~29 settled tests and the policy/view/increment DDL dropped; stale sections. All corrected in the plan (change list C-01…C-20). |
+| No write path for human halts carrying candidate values (found in assembly) | New writer-only `open_market_data_halt` (G-1), approved. |
+| N1 function body supplied from memory | Mechanically compared with the real Phase 4 migration: identical plus the single permission-line change. Migration must use the real text, not AI #1's re-indented copy. |
+
+**Evidence basis.** (a) Read-only public-feed spikes run by the user on 2026-10-02 and 2026-10-07 from scripts the auditor wrote (no prices or sizes recorded): BTC ≈5.75–6.4 matches/s, ETH ≈1.8–2.4/s; heartbeat gap p50 ≈1,000 ms, max 3,426 ms; event lag p99 up to 2,967 ms; six fractional timestamp digits; two of three captures closed by the server after ≈56–64 s, cause unknown. (b) `phase5-sql-checks.sql` executed by the user on PostgreSQL 18.6 (temp objects only). (c) Mechanical checks by the auditor: N1 text diff; all 155 distinct test names from four sources accounted for; no subquery index predicates. (d) **Not executed by anyone:** all Phase 5 DDL, grants, triggers and function bodies (none yet exist); sandbox/production smoke; `npm audit`; deployment-host heartbeat; Coinbase documentation statements on heartbeat and rate limits come from AI #1's report and were not re-fetched by the auditor.
+
+**Open items carried into implementation (none blocking Sprint 5.0):**
+1. Written Coinbase terms clearance — hard gate before persistence activates.
+2. Deployment-host reconfirmation of the 5,000 ms heartbeat timeout.
+3. Recorded `npm audit` for `ws@8.22.0` (advisory ranges quoted are not an exhaustive scan).
+4. Every function body (including the new `open_market_data_halt`, and the idempotency-conflict path that must open a halt while still raising `23505`) must be written and audited against real PostgreSQL 18.x in Sprint 5.1.
+5. The auditor-drafted `platform_owner` catalog INSERT/UPDATE column grants are provisional until the Sprint 5.1 privilege snapshot; the blanket `revoke … in schema platform from public` must be proven harmless to Phase 1–4 objects by an ACL snapshot (`runtimeKeepsPhase4GrantsUnchanged`).
+6. Residual risk accepted: a superuser can `SET ROLE platform_owner` and pass the bucket guard.
+
 ---
 
 ## PART C — CURRENT STATUS
@@ -231,7 +272,10 @@ PHASE 2.4      ████████████████████  COM
 PHASE 3        ████████████████████  COMPLETE — SIGNED OFF (Domain Model & Financial Core)
 PHASE 4        ████████████████████  COMPLETE — SIGNED OFF (Authentication & Authorization)
 PHASE 4.1      ████████████████████  COMPLETE — SIGNED OFF (HTTP Transport Boundary)
+PHASE 5        ██░░░░░░░░░░░░░░░░░░  PLAN APPROVED 2026-10-11 — implementation not started (Market-Data Engine)
 ```
+
+**Phase 5 plan summary (approved 2026-10-11, planning only, full text `docs/phase-5-plan.md`):** a single public Coinbase spot adapter whose every output fails closed. Availability is computed by PostgreSQL on its own wall clock, so a crashed or hung engine becomes unavailable within the policy bound (10 s by default) with no cooperation from the engine; consumers read only an effective-state view; all writes go through owner-owned SECURITY DEFINER functions; history tables are insert-only with trigger guards; human-latched halts are separated from automatic recovery; and a price-jump clear needs the operator to type the candidate price and creates a bounded, durable reset. The review found and fixed, by real PostgreSQL execution or mechanical comparison rather than assumption, a wrong sequence-gap rule, a frozen-clock freshness bug, a microsecond double-count in the timestamp CHECK, a NULL-in-primary-key design, and — in the final assembly — a plan step that would have revoked the Phase 4 runtime role's own authentication grant. **Phase 5 explicitly not yet built:** everything. Open gates: Coinbase terms clearance, deployment-host heartbeat check, `ws` audit evidence. **Next up: Sprint 5.0 (approval and legal gate), then Sprint 5.1 (migration, roles, grants, N1, and function bodies audited against real PostgreSQL 18.x).**
 
 **Phase 4.1 summary (commits `d31275d` + `c12d858`):** the platform's first network-reachable listener — a real NGINX 1.30.5 (digest-pinned) reverse proxy in front of a Unix-socket-only Node API, with `__Host-`-prefixed cookies, double-submit CSRF, exact-origin checking, and a leaky-bucket rate limiter. Independently verified against a real HTTPS client, real NGINX container, and real PostgreSQL 18.6 — no mocked HTTP layer at any point. This phase found more real bugs live during implementation than any prior phase, each one only discoverable by insisting on genuine full-stack execution rather than trusting configuration on paper: (1) an NGINX `proxy_pass` URI-rewrite quirk was silently turning every request into `/`, caught only because real requests were sent to a real proxy; (2) a **pre-existing Phase 4 defect** — `apps/api/src/auth.ts` aliased `platform.users` as `user`, a PostgreSQL special identifier, causing every real login to fail with a syntax error — this had been latent and completely unexercised since Phase 4 was signed off, because Phase 4's own tests called the database functions directly rather than through the actual login code path; fixed and isolated in its own commit (`d31275d`) with a new regression test proving `authenticateAndCreateSession` works against real Postgres for the first time; (3) a genuine, externally-confirmed architectural limit (NGINX trac ticket #1005/#2420, open since 2016) — NGINX cannot emit an HTTP response for its own header-read timeout, only close the connection — resolved not by weakening the requirement but by shifting timeout authority to Node (whose own body-timeout already worked correctly) via `proxy_request_buffering off` and deliberately longer NGINX backstop timeouts, with the one genuinely unfixable case (slow headers) explicitly documented in this plan as a disclosed, RFC-permitted limitation rather than silently glossed over.
 
