@@ -171,13 +171,29 @@ Coinbase's official landing page says market-data APIs are public (REST/WebSocke
 | Heartbeat | Coinbase documents heartbeat roughly every second with sequence/last-trade data, and warns that matches can be dropped, directing clients to heartbeat plus REST recovery. [Channels](https://docs.cdp.coinbase.com/exchange/websocket-feed/channels) (accessed 2026-10-08; *AI #1 report in 5.1/FC; not independently re-fetched by the auditor*). AUD: heartbeat gap p50 ≈1,000 ms, max 3,426 ms over four captures. |
 | Rate limits | Public REST documented at 10 requests/s/IP, burst 15, lazy-fill token bucket. [Rate limits](https://docs.cdp.coinbase.com/exchange/rest-api/rate-limits) (accessed 2026-10-08; *AI #1 report, not re-fetched by auditor*). Local cap: 10 requests/s. |
 | Reconnect/resume | A reconnect starts a fresh subscription and re-baseline; no resume guarantee assumed. |
-| Licensing | Written Coinbase Market Data Terms clearance is a Sprint-5.0 activation gate. |
-| Cost/free tier | Not verified from official documentation. |
+| Licensing | Written Coinbase Market Data Terms clearance is a Sprint-5.0 activation gate. Terms read by the auditor 2026-10-11 (version dated August 7, 2026); see §3.1. |
+| Cost/free tier | Coinbase's feed documentation says the public feed is available without authentication and mentions no fees; the Terms (Clause 7) refer to "applicable fees" for the subscribed product and no fee schedule for the public feed was found. Unverified; asked of Coinbase in the clearance request. |
 | Outage/quality caveat | AUD: two of three capture sessions were closed by the server after ≈56–64 s; one 15-minute session had no reconnect. Cause not established. |
 
 `ws@8.22.0` is exact-pinned in `package.json`; the lockfile integrity entry must match npm's resolved tarball SHA-512. GitHub's advisory database lists `ws` CVE-2026-48779 / GHSA-96hv-2xvq-fx4p (affects `>=8.0.0 <8.21.0`, fixed 8.21.0) and CVE-2026-45736 / GHSA-58qx-3vcg-4xpx (affects `>=8.0.0 <8.20.1`, fixed 8.20.1); `8.22.0` is outside both ranges. [GHSA-96hv-2xvq-fx4p](https://github.com/advisories/GHSA-96hv-2xvq-fx4p), [GHSA-58qx-3vcg-4xpx](https://github.com/advisories/GHSA-58qx-3vcg-4xpx) (accessed 2026-10-08). **This is not an exhaustive scan.** Sprint 5.0 must record the actual `npm audit` command and output. [Release 8.22.0](https://github.com/websockets/ws/releases/tag/8.22.0).
 
 `ws` enforces `maxPayload: 65_536`; TLS certificate verification is never disabled; only `wss:` endpoints are accepted.
+
+### 3.1 Operating constraints from the Market Data Terms (read 2026-10-11)
+
+Source: [Coinbase Market Data Terms of Use](https://www.coinbase.com/legal/market_data), version dated August 7, 2026. The auditor read it through a summarizing fetch tool; **the clause wording must be re-verified on the page by the user before the clearance is recorded.** These constraints bind every later phase:
+
+| # | Constraint | Basis | Consequence for this project |
+|---|---|---|---|
+| T-1 | Internal use only: personal or research purposes, for the user or their entity; not "an application intended for use by end users" | Clause 2 | User statement, recorded 2026-10-11: **this is a personal trading platform used only by the owner.** Any second user, any other entity, or any end-user-facing application requires fresh clearance and re-opens approved decision 8. |
+| T-2 | No redistribution or display of Market Data or derived works outside the organization | Clause 3.2 | No export, sharing, publication or third-party feed of stored observations or anything derived from them. |
+| T-3 | No indexes, benchmarks, fair-value prices or valuations built from the data | Clauses 3.3, 3.4 | None is planned; none may be added without clearance. |
+| T-4 | **No use of the data to develop, train, fine-tune, teach, validate, benchmark or improve any AI/ML model** | Clause 3.5 | Stored observations must not be used for machine-learning strategies. Phase 6 and Phase 13 must be planned with this: rule-based research only, or a different, licensed data source. |
+| T-5 | Storage, caching and retention are **not addressed** by the Terms | absence | Silence is not permission. Indefinite retention (§18 item 15) is conditional on Coinbase's written answer. If Coinbase refuses or limits retention, §18 item 15 and Sprint 5.3 are re-opened before persistence is built. |
+| T-6 | Coinbase may withdraw, suspend or change data or access at any time, without notice | Clause 5 | Already covered: the engine fails closed, the effective-state view goes unavailable, strategies HOLD. No design change; a second provider remains a possible later mitigation. |
+| T-7 | The licence is revocable and the Terms can change; continued use is acceptance | Clauses 2, 6 | The clearance record names the version date it covered; re-check the Terms at each phase boundary. |
+
+The written clearance request asks Coinbase to confirm storage and retention, internal research and own-account trading, internal derived values, fees, and connection limits.
 
 ## 4. Contracts
 
