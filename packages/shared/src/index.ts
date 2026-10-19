@@ -24,9 +24,9 @@ export type DecimalString = Brand<string, "DecimalString">;
  * It rejects imprecise input rather than rounding it.
  */
 export function canonicalizeDecimalString(value: string): Result<DecimalString, "INVALID_DECIMAL_STRING"> {
-  const match = /^(\d+)(?:\.(\d+))?$/.exec(value);
+  const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(value);
   if (match === null) return { ok: false, error: "INVALID_DECIMAL_STRING" };
-  const integer = match[1]!.replace(/^0+(?=\d)/, "");
+  const integer = match[1]!;
   const fractional = match[2] ?? "";
   if (integer.length > 20 || fractional.length > 18) return { ok: false, error: "INVALID_DECIMAL_STRING" };
   return { ok: true, value: `${integer}.${fractional.padEnd(18, "0")}` as DecimalString };

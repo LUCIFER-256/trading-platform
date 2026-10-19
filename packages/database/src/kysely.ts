@@ -29,6 +29,10 @@ export interface DatabaseSchema {
   ledger_transactions: LedgerTransactionsTable;
   ledger_entries: LedgerEntriesTable;
   wallet_balances: WalletBalancesView;
+  market_data_policies: MarketDataPoliciesTable;
+  market_data_observations: MarketDataObservationsTable;
+  market_data_instrument_state: MarketDataInstrumentStateTable;
+  market_data_effective_state: MarketDataEffectiveStateView;
 }
 
 export interface MarketsTable {
@@ -44,6 +48,8 @@ export interface InstrumentsTable {
   market_id: string;
   instrument_code: string;
   enabled: boolean;
+  price_increment: string | null;
+  size_increment: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -51,6 +57,7 @@ export interface InstrumentsTable {
 export interface ProvidersTable {
   id: Generated<string>;
   provider_code: string;
+  enabled: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -194,6 +201,11 @@ export interface WalletBalancesView {
   available_balance: string;
   reserved_funds: string;
 }
+
+export interface MarketDataPoliciesTable { instrument_id: string; enabled: boolean; max_ingestion_age_ms: number; max_event_age_ms: number; max_future_skew_ms: number; max_initial_event_delay_ms: number; max_price_jump_bps: number; heartbeat_timeout_ms: number; circuit_failure_threshold: number; circuit_failure_window_ms: number; circuit_cooldown_ms: number; circuit_half_open_ready_ms: number; heartbeat_ahead_count: number; heartbeat_ahead_span_ms: number; heartbeat_settle_count: number; heartbeat_settle_span_ms: number; jump_reset_tolerance_bps: number; jump_reset_ttl_ms: number; created_at: Date; updated_at: Date; }
+export interface MarketDataObservationsTable { id: Generated<string>; provider_id: string; instrument_id: string; provider_symbol: string; provider_sequence: string; trade_id: string; event_at_us: string; event_at: Date; received_at: Date; ingested_at: Date; bid_as_of_last_trade: string; bid_size_as_of_last_trade: string; ask_as_of_last_trade: string; ask_size_as_of_last_trade: string; last_trade_price: string; last_trade_size: string; volume_24h: string | null; }
+export interface MarketDataInstrumentStateTable { instrument_id: string; provider_id: string; observation_id: string | null; base_availability: string; event_at: Date | null; ingested_at: Date | null; provider_sequence: string | null; trade_id: string | null; bid_as_of_last_trade: string | null; bid_size_as_of_last_trade: string | null; ask_as_of_last_trade: string | null; ask_size_as_of_last_trade: string | null; last_trade_price: string | null; last_trade_size: string | null; volume_24h: string | null; last_accepted_price: string | null; updated_at: Date; }
+export interface MarketDataEffectiveStateView { instrument_id: string; provider_id: string | null; observation_id: string | null; provider_sequence: string | null; trade_id: string | null; bid_as_of_last_trade: string | null; bid_size_as_of_last_trade: string | null; ask_as_of_last_trade: string | null; ask_size_as_of_last_trade: string | null; last_trade_price: string | null; last_trade_size: string | null; volume_24h: string | null; event_at: Date | null; ingested_at: Date | null; availability: string; evaluated_at: Date; }
 
 /** The database package's Kysely client type. */
 export type KyselyDatabase = Kysely<DatabaseSchema>;

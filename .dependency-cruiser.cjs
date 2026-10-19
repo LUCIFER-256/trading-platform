@@ -62,7 +62,7 @@ module.exports = {
       name: "database-may-depend-only-on-approved-contracts-and-drivers",
       severity: "error",
       from: { path: "^packages/database/" },
-      to: { pathNot: "^(packages/(database|core|shared)/|node_modules/(kysely|pg)/|(fs|path)$)" }
+      to: { pathNot: "^(packages/(database|core|shared|market-data)/|node_modules/(kysely|pg)/|(fs|path)$)" }
     },
     {
       name: "market-data-may-depend-only-on-shared",
@@ -87,6 +87,12 @@ module.exports = {
       severity: "error",
       from: { path: "^packages/strategies/" },
       to: { path: "^packages/execution/" }
+    },
+    {
+      name: "strategies-must-not-depend-on-provider-adapters",
+      severity: "error",
+      from: { path: "^packages/strategies/" },
+      to: { path: "^apps/market-data/src/coinbase/" }
     },
     {
       name: "risk-may-depend-only-on-trading",

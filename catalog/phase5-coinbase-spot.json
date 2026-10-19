@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "provider": { "provider_code": "coinbase-exchange" },
+  "market": { "market_code": "crypto-spot", "enabled": false },
+  "instruments": [
+    { "instrument_code": "btc-usd", "provider_symbol": "BTC-USD", "enabled": false, "price_increment": "0.01", "size_increment": "0.00000001", "policy": { "enabled": false } },
+    { "instrument_code": "eth-usd", "provider_symbol": "ETH-USD", "enabled": false, "price_increment": "0.01", "size_increment": "0.00000001", "policy": { "enabled": false } }
+  ]
+}
