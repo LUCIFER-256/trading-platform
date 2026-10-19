@@ -22,21 +22,25 @@ const adapterDirectory = join(repositoryRoot, "apps/market-data/src/coinbase");
 const adapterFile = join(adapterDirectory, ".dependency-cruiser-negative-test.ts");
 const importerFile = join(repositoryRoot, "packages/strategies/src/.dependency-cruiser-negative-test.ts");
 
-assert(!existsSync(adapterDirectory), "The negative-test adapter directory must not already exist.");
 assert(!existsSync(importerFile), "The negative-test importer file must not already exist.");
+assert(!existsSync(adapterFile), "The negative-test adapter file must not already exist.");
 
-mkdirSync(adapterDirectory, { recursive: true });
-writeFileSync(adapterFile, "export const prohibitedAdapter = true;\n");
-writeFileSync(importerFile, "import { prohibitedAdapter } from '../../../apps/market-data/src/coinbase/.dependency-cruiser-negative-test';\nvoid prohibitedAdapter;\n");
+const adapterDirectoryExisted = existsSync(adapterDirectory);
+const baseline = runArchitectureCheck();
+assert(baseline.status === 0, `Dependency-cruiser must pass before injection: ${baseline.output}`);
+
+if (!adapterDirectoryExisted) mkdirSync(adapterDirectory, { recursive: true });
 
 try {
+  writeFileSync(adapterFile, "export const prohibitedAdapter = true;\n");
+  writeFileSync(importerFile, "import { prohibitedAdapter } from '../../../apps/market-data/src/coinbase/.dependency-cruiser-negative-test';\nvoid prohibitedAdapter;\n");
   const rejected = runArchitectureCheck();
   assert(rejected.status !== 0, "Dependency-cruiser must reject the prohibited import.");
   assert(rejected.output.includes("strategies-must-not-depend-on-provider-adapters"), "Dependency-cruiser output must name the provider-adapter rule.");
 } finally {
   rmSync(importerFile, { force: true });
   rmSync(adapterFile, { force: true });
-  rmdirSync(adapterDirectory);
+  if (!adapterDirectoryExisted) rmdirSync(adapterDirectory);
 }
 
 const clean = runArchitectureCheck();

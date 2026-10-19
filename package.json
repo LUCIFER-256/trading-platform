@@ -19,7 +19,7 @@
     "auth:issue-password-reset": "npm run build && node dist/apps/api/src/issue-password-reset.js",
     "auth:bootstrap-super-admin": "npm run build && node dist/apps/api/src/bootstrap-super-admin.js",
     "api:serve": "npm run build && node dist/apps/api/src/http-server.js",
-    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && node dist/tests/unit/migration-policy.test.js && node dist/tests/unit/migration-command.test.js && node dist/tests/unit/auth.test.js && npm run check:architecture && node dist/tests/unit/market-data-contracts.test.js && node dist/tests/unit/dependency-cruiser-negative.test.js && node dist/tests/unit/migration-immutability.test.js",
+    "test": "npm run build && node dist/tests/unit/runtime-mode.test.js && node dist/tests/unit/contracts.test.js && node dist/tests/unit/database-configuration.test.js && node dist/tests/unit/database-client.test.js && node dist/tests/unit/migration-policy.test.js && node dist/tests/unit/migration-command.test.js && node dist/tests/unit/auth.test.js && npm run check:architecture && node dist/tests/unit/market-data-contracts.test.js && node dist/tests/unit/dependency-cruiser-negative.test.js && node dist/tests/unit/migration-immutability.test.js && node dist/tests/unit/market-data-validation.test.js",
     "test:database-integration": "npm run build && node dist/tests/integration/database-health.integration.test.js",
     "test:migrations-integration": "npm run build && node dist/tests/integration/migrations.integration.test.js",
     "test:http-integration": "npm run build && node dist/tests/integration/http.integration.test.js",
