@@ -15,27 +15,34 @@ function identifier(value: unknown, source: string | undefined): string | undefi
 
 export function parseCoinbaseFrame(frame: string): ParseResult {
   if (Buffer.byteLength(frame, "utf8") > MAX_FRAME_PAYLOAD_BYTES) return { ok: false, reason: "PAYLOAD_TOO_LARGE" };
-  const decimalNumberSources: string[] = [];
-  const identifierNumberSources = new Map<string, string>();
+  const decimalNumberSources: { readonly holder: unknown; readonly source: string }[] = [];
+  const identifierNumberSources = new Map<string, { readonly holder: unknown; readonly source: string }[]>();
   let parsed: unknown;
   try {
     parsed = JSON.parse(frame, function (key: string, value: unknown, ...contexts: readonly { readonly source: string }[]) {
-      if (["price", "size", "last_size", "best_bid", "best_bid_size", "best_ask", "best_ask_size", "volume_24h"].includes(key) && typeof value === "number" && contexts[0] !== undefined) decimalNumberSources.push(contexts[0].source);
-      if (["sequence", "trade_id", "last_trade_id"].includes(key) && typeof value === "number" && contexts[0] !== undefined) identifierNumberSources.set(key, contexts[0].source);
+      if (["price", "size", "last_size", "best_bid", "best_bid_size", "best_ask", "best_ask_size", "volume_24h"].includes(key) && typeof value === "number" && contexts[0] !== undefined) decimalNumberSources.push({ holder: this, source: contexts[0].source });
+      if (["sequence", "trade_id", "last_trade_id"].includes(key) && typeof value === "number" && contexts[0] !== undefined) {
+        const sources = identifierNumberSources.get(key) ?? [];
+        sources.push({ holder: this, source: contexts[0].source });
+        identifierNumberSources.set(key, sources);
+      }
       return value;
     });
   } catch {
     return { ok: false, reason: "MALFORMED" };
   }
-  if (decimalNumberSources.length > 0) return { ok: false, reason: "MALFORMED", source: decimalNumberSources[0]! };
+  const rootDecimalNumberSource = decimalNumberSources.find((entry) => entry.holder === parsed);
+  if (rootDecimalNumberSource !== undefined) return { ok: false, reason: "MALFORMED", source: rootDecimalNumberSource.source };
   const message = object(parsed);
   if (message === undefined || typeof message.type !== "string") return { ok: false, reason: "MALFORMED" };
   const symbol = string(message.product_id);
-  const sequence = identifier(message.sequence, identifierNumberSources.get("sequence"));
+  const sequenceSource = identifierNumberSources.get("sequence")?.find((entry) => entry.holder === parsed);
+  const sequence = identifier(message.sequence, sequenceSource?.source);
   const eventAtUs = eventAtUsFromRfc3339(message.time);
   if (symbol === undefined || sequence === undefined || eventAtUs === undefined) return { ok: false, reason: "MALFORMED" };
   if (message.type === "ticker") {
-    const tradeId = identifier(message.trade_id, identifierNumberSources.get("trade_id"));
+    const tradeIdSource = identifierNumberSources.get("trade_id")?.find((entry) => entry.holder === parsed);
+    const tradeId = identifier(message.trade_id, tradeIdSource?.source);
     const bid = canonicalDecimal(message.best_bid); const bidSize = canonicalDecimal(message.best_bid_size); const ask = canonicalDecimal(message.best_ask); const askSize = canonicalDecimal(message.best_ask_size); const lastPrice = canonicalDecimal(message.price); const lastSize = canonicalDecimal(message.last_size);
     const volume24h = message.volume_24h === null ? null : canonicalDecimal(message.volume_24h);
     if (tradeId === undefined) return { ok: false, reason: "MALFORMED" };
@@ -46,11 +53,12 @@ export function parseCoinbaseFrame(frame: string): ParseResult {
     return { ok: true, value: { kind: "ticker", symbol, sequence, tradeId, eventAtUs, bid, bidSize, ask, askSize, lastPrice, lastSize, volume24h } };
   }
   if (message.type === "match") {
-    const tradeId = identifier(message.trade_id, identifierNumberSources.get("trade_id")); const price = canonicalDecimal(message.price); const size = canonicalDecimal(message.size);
+    const tradeIdSource = identifierNumberSources.get("trade_id")?.find((entry) => entry.holder === parsed); const tradeId = identifier(message.trade_id, tradeIdSource?.source); const price = canonicalDecimal(message.price); const size = canonicalDecimal(message.size);
     return tradeId === undefined || price === undefined || size === undefined ? { ok: false, reason: "MALFORMED" } : { ok: true, value: { kind: "match", symbol, sequence, tradeId, eventAtUs, price, size } };
   }
   if (message.type === "heartbeat") {
-    const lastTradeId = identifier(message.last_trade_id, identifierNumberSources.get("last_trade_id"));
+    const lastTradeIdSource = identifierNumberSources.get("last_trade_id")?.find((entry) => entry.holder === parsed);
+    const lastTradeId = identifier(message.last_trade_id, lastTradeIdSource?.source);
     return lastTradeId === undefined ? { ok: false, reason: "MALFORMED" } : { ok: true, value: { kind: "heartbeat", symbol, sequence, lastTradeId, eventAtUs } };
   }
   return { ok: false, reason: "MALFORMED" };
