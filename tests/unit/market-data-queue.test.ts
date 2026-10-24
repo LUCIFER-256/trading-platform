@@ -106,6 +106,82 @@ async function persistenceTimeoutRecordsRecovery(): Promise<void> {
   passed("persistenceTimeoutRecordsRecovery");
 }
 
+async function queueAbandonedWriteCannotRunAlongsideNewGeneration(): Promise<void> {
+  const oldWrite = deferred<void>();
+  const three = deferred<void>();
+  const four = deferred<void>();
+  const five = deferred<void>();
+  const started: number[] = [];
+  const completed: number[] = [];
+  let newGenerationInFlight = 0;
+  let maxNewGenerationInFlight = 0;
+  const value = queueSetup(async (item) => {
+    if (item === 1) { await oldWrite.promise; return; }
+    started.push(item);
+    newGenerationInFlight += 1;
+    maxNewGenerationInFlight = Math.max(maxNewGenerationInFlight, newGenerationInFlight);
+    const completion = item === 3 ? three : item === 4 ? four : five;
+    await completion.promise;
+    newGenerationInFlight -= 1;
+    completed.push(item);
+  });
+  assert(value.queue.enqueue(1), "The abandoned write is accepted.");
+  value.scheduler.advanceTo(1_000);
+  assert(JSON.stringify(value.recoveries) === JSON.stringify(["PERSISTENCE_TIMEOUT:0"]), "The timeout records one recovery.");
+  value.queue.reset();
+  assert(value.queue.enqueue(3) && value.queue.enqueue(4), "The new generation accepts items three and four.");
+  await flushTurns(2);
+  assert(JSON.stringify(started) === JSON.stringify([3]) && maxNewGenerationInFlight === 1, "Item three starts immediately and item four waits.");
+  oldWrite.resolve();
+  await flushTurns(2);
+  assert(JSON.stringify(started) === JSON.stringify([3]) && newGenerationInFlight === 1, "Late completion of the abandoned write cannot start item four.");
+  assert(value.queue.size() === 2, "Late completion cannot clear the new generation writing marker.");
+  assert(value.recoveries.length === 1, "Late completion records no additional recovery.");
+  three.resolve();
+  await flushTurns(2);
+  assert(JSON.stringify(started) === JSON.stringify([3, 4]) && maxNewGenerationInFlight === 1, "Item four starts only after item three completes.");
+  four.resolve();
+  await flushTurns(2);
+  assert(value.queue.enqueue(5), "Item five is accepted after item four completes.");
+  await flushTurns(2);
+  assert(JSON.stringify(started) === JSON.stringify([3, 4, 5]) && maxNewGenerationInFlight === 1, "Item five is serialized behind item four.");
+  five.resolve();
+  await flushTurns(2);
+  assert(JSON.stringify(completed) === JSON.stringify([3, 4, 5]), "New-generation writes complete strictly in order.");
+  passed("queueAbandonedWriteCannotRunAlongsideNewGeneration");
+}
+
+async function queueDiscardStopsAndClearsWaitingItems(): Promise<void> {
+  const oldWrite = deferred<void>();
+  const written: number[] = [];
+  const value = queueSetup(async (item) => {
+    if (item === 1) {
+      await oldWrite.promise;
+      return;
+    }
+    written.push(item);
+  });
+  assert(value.queue.enqueue(1), "Blocked old-generation item is accepted.");
+  assert(value.queue.enqueue(2), "Waiting old-generation item is accepted.");
+  value.queue.discard();
+  assert(value.queue.size() === 0, "Discard clears waiting and writing size.");
+  assert(!value.queue.enqueue(3), "Discard rejects work until reset.");
+  oldWrite.resolve();
+  await flushTurns(3);
+  assert(
+    value.recoveries.length === 0 && value.failures.length === 0,
+    "Late old write completion records no recovery or failure.",
+  );
+  value.queue.reset();
+  assert(value.queue.enqueue(4), "Reset accepts new-generation work.");
+  await flushTurns(3);
+  assert(
+    JSON.stringify(written) === JSON.stringify([4]),
+    "Only the post-reset item writes after discard.",
+  );
+  passed("queueDiscardStopsAndClearsWaitingItems");
+}
+
 async function rejectFloodAggregates(): Promise<void> {
   const clock = new FakeClock();
   const aggregator = new QualityAggregator(clock);
@@ -190,6 +266,8 @@ async function qualityBucketFlushLossBound(): Promise<void> {
 void (async () => {
   await queueOverflowRecordsRecovery();
   await persistenceTimeoutRecordsRecovery();
+  await queueAbandonedWriteCannotRunAlongsideNewGeneration();
+  await queueDiscardStopsAndClearsWaitingItems();
   await rejectFloodAggregates();
   await delayedBurstAggregates();
   await qualityBucketFlushRetryDoesNotDoubleCount();

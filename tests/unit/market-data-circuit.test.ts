@@ -358,6 +358,21 @@ async function ordinaryRejectsAndIdempotencyConflictNeverCountAsFailedAttempts()
   passed("ordinaryRejectsAndIdempotencyConflictNeverCountAsFailedAttempts");
 }
 
+async function humanHaltDuringReadinessUnblocksSettle(): Promise<void> {
+  const value = setup();
+  value.circuit.beginReady(["ETH", "BTC"], []);
+  open(value.circuit, value.clock);
+  value.scheduler.advanceTo(45_000);
+  assert(value.circuit.consumeConnectionAttempt(), "Half-open consumes its single attempt.");
+  value.circuit.productAssertionsPassed();
+  value.circuit.subscriptionsAcknowledged();
+  await value.circuit.validTicker("ETH", request);
+  assert(value.circuit.state() === "HALF_OPEN", "Readiness still waits for BTC before its halt.");
+  value.circuit.markHumanHalted("BTC");
+  assert(value.circuit.state() === "SETTLING", "Human halt removes BTC from the readiness requirement.");
+  passed("humanHaltDuringReadinessUnblocksSettle");
+}
+
 void (async () => {
   await heartbeatAheadSettlesBeforeReconnect();
   await heartbeatAheadFourHeartbeatsAcross2500msRebaselines();
@@ -378,4 +393,5 @@ void (async () => {
   await authTlsFailureRequiresRemediation();
   await circuitParametersAgreeAcrossEnabledPolicies();
   await ordinaryRejectsAndIdempotencyConflictNeverCountAsFailedAttempts();
+  await humanHaltDuringReadinessUnblocksSettle();
 })();

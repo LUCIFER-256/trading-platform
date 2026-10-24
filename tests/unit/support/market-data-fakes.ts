@@ -35,18 +35,23 @@ export class InMemoryPersistencePort implements PersistencePort {
   public readonly availability = new Map<string, string>();
   public readonly buckets = new Map<string, bigint>();
   public readonly qualityAppendCalls: AppendQualityBucketRequest[] = [];
+  public readonly haltRequests: OpenHaltRequest[] = [];
+  public readonly transitionRequests: TransitionStateRequest[] = [];
+  public appendGate: Promise<void> | undefined;
   public appendOutcome: AppendMarketDataObservationResult["outcome"] = "ACCEPTED";
   public throwTransition = false;
   public failQualityAppend = false;
   public loseNextQualityAcknowledgement = false;
   public async appendObservation(request: AppendObservationRequest): Promise<AppendMarketDataObservationResult> {
+    await this.appendGate;
     this.calls.push(`append:${request.instrumentId}`);
     if (this.appendOutcome === "IDEMPOTENCY_CONFLICT" || this.appendOutcome === "PRICE_JUMP_HALT") return { outcome: this.appendOutcome, observationId: null, haltId: "halt" };
     if (this.availability.get(request.instrumentId) !== "UNAVAILABLE_HUMAN_HALT") this.availability.set(request.instrumentId, "AVAILABLE");
     return { outcome: "ACCEPTED", observationId: "observation", haltId: null };
   }
-  public async openHalt(request: OpenHaltRequest): Promise<string> { this.calls.push(`halt:${request.instrumentId}`); this.availability.set(request.instrumentId, "UNAVAILABLE_HUMAN_HALT"); return "halt"; }
+  public async openHalt(request: OpenHaltRequest): Promise<string> { this.haltRequests.push(request); this.calls.push(`halt:${request.instrumentId}`); this.availability.set(request.instrumentId, "UNAVAILABLE_HUMAN_HALT"); return "halt"; }
   public async transitionState(request: TransitionStateRequest): Promise<void> {
+    this.transitionRequests.push(request);
     if (this.throwTransition) throw new Error("transition failure");
     if (this.availability.get(request.instrumentId ?? "") === "UNAVAILABLE_HUMAN_HALT") throw new Error("Human halt cannot be cleared.");
     this.calls.push(`transition:${request.instrumentId ?? "provider"}:${request.newBaseAvailability}`);

@@ -38,6 +38,14 @@ export class PersistenceQueue<T> {
     this.stopped = false;
   }
 
+  public discard(): void {
+    this.stopped = true;
+    this.generation += 1;
+    this.writing = false;
+    this.waiting.length = 0;
+    this.overflowEpisode = false;
+  }
+
   public size(): number { return this.waiting.length + (this.writing ? 1 : 0); }
 
   private stop(reason: QueueRecoveryReason): void {

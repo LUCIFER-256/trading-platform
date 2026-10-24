@@ -62,6 +62,7 @@ export class ProviderCircuit {
     for (const id of active) this.active.add(id);
     for (const id of humanHalted) this.humanHalted.add(id);
   }
+  public markHumanHalted(instrumentId: string): void { this.humanHalted.add(instrumentId); this.maybeSettle(); }
   public connectionFailed(reason = "CONNECTION_FAILED"): void { this.recordFailure(reason); }
   public malformedPayload(): boolean {
     this.recordInWindow(this.malformedAt, 60_000);
