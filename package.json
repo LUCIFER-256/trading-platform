@@ -25,7 +25,8 @@
     "test:http-integration": "npm run build && node dist/tests/integration/http.integration.test.js",
     "test:market-data-integration": "npm run build && node dist/tests/integration/market-data-functions.integration.test.js",
     "test:market-data-privileges-integration": "npm run build && node dist/tests/integration/market-data-privileges.integration.test.js",
-    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\""
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test:wire": "npm run build && node dist/tests/unit/market-data-wire.test.js"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
