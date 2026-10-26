@@ -21,9 +21,11 @@ const repositoryRoot = resolve(__dirname, "../../..");
 const adapterDirectory = join(repositoryRoot, "apps/market-data/src/coinbase");
 const adapterFile = join(adapterDirectory, ".dependency-cruiser-negative-test.ts");
 const importerFile = join(repositoryRoot, "packages/strategies/src/.dependency-cruiser-negative-test.ts");
+const sessionFile = join(repositoryRoot, "apps/market-data/src/coinbase/.database-negative-test.ts");
 
 assert(!existsSync(importerFile), "The negative-test importer file must not already exist.");
 assert(!existsSync(adapterFile), "The negative-test adapter file must not already exist.");
+assert(!existsSync(sessionFile), "The database-boundary negative-test file must not already exist.");
 
 const adapterDirectoryExisted = existsSync(adapterDirectory);
 const baseline = runArchitectureCheck();
@@ -33,13 +35,35 @@ if (!adapterDirectoryExisted) mkdirSync(adapterDirectory, { recursive: true });
 
 try {
   writeFileSync(adapterFile, "export const prohibitedAdapter = true;\n");
-  writeFileSync(importerFile, "import { prohibitedAdapter } from '../../../apps/market-data/src/coinbase/.dependency-cruiser-negative-test';\nvoid prohibitedAdapter;\n");
+  writeFileSync(
+    importerFile,
+    [
+      "import { prohibitedAdapter } from",
+      "  '../../../apps/market-data/src/coinbase/.dependency-cruiser-negative-test';",
+      "void prohibitedAdapter;",
+      "",
+    ].join("\n"),
+  );
   const rejected = runArchitectureCheck();
   assert(rejected.status !== 0, "Dependency-cruiser must reject the prohibited import.");
-  assert(rejected.output.includes("strategies-must-not-depend-on-provider-adapters"), "Dependency-cruiser output must name the provider-adapter rule.");
+  assert(
+    rejected.output.includes("strategies-must-not-depend-on-provider-adapters"),
+    "Dependency-cruiser output must name the provider-adapter rule.",
+  );
+  writeFileSync(
+    sessionFile,
+    "import type { DatabaseClient } from '../../../../packages/database/src';\nvoid (undefined as unknown as DatabaseClient);\n",
+  );
+  const databaseRejected = runArchitectureCheck();
+  assert(databaseRejected.status !== 0, "Dependency-cruiser must reject a session database import.");
+  assert(
+    databaseRejected.output.includes("market-data-database-imports-must-use-persistence-boundary"),
+    "Dependency-cruiser output must name the database-boundary rule.",
+  );
 } finally {
   rmSync(importerFile, { force: true });
   rmSync(adapterFile, { force: true });
+  rmSync(sessionFile, { force: true });
   if (!adapterDirectoryExisted) rmdirSync(adapterDirectory);
 }
 

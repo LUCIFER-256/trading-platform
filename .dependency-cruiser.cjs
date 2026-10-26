@@ -29,10 +29,24 @@ module.exports = {
       to: { path: "^node_modules/(pg|kysely)/" }
     },
     {
+      name: "market-data-database-imports-must-use-persistence-boundary",
+      severity: "error",
+      from: {
+        path: "^apps/market-data/src/",
+        pathNot: "^apps/market-data/src/(persistence/|tools/|advisory-lock\\.ts$|engine\\.ts$|main\\.ts$)"
+      },
+      to: { path: "^packages/database/" }
+    },
+    {
       name: "api-may-depend-only-on-phase4-boundaries",
       severity: "error",
       from: { path: "^apps/api/" },
-      to: { pathNot: "^(apps/api/|packages/(core|database|shared)/|node_modules/argon2/|(node:)?(crypto|fs(?:/promises)?|path|readline|process|http)$)" }
+      to: {
+        pathNot: [
+          "^(apps/api/|packages/(core|database|shared)/|node_modules/argon2/",
+          "|(node:)?(crypto|fs(?:/promises)?|path|readline|process|http)$)",
+        ].join("")
+      }
     },
     {
       name: "api-must-not-depend-on-domain-engines",
