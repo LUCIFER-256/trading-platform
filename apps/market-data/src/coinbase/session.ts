@@ -94,6 +94,13 @@ export interface SessionOptions {
   readonly endpoint: string;
   readonly instruments: readonly SessionInstrument[];
   readonly humanHalted: readonly string[];
+  readonly recovery?: ReadonlyMap<
+    string,
+    {
+      readonly price: DecimalString;
+      readonly eventTime: string;
+    }
+  >;
   readonly transport: WireTransport;
   readonly products: CoinbaseProductAssertions;
   readonly circuit: ProviderCircuit;
@@ -129,6 +136,13 @@ export class CoinbaseSession {
   >;
   public constructor(private readonly value: SessionOptions) {
     for (const id of value.humanHalted) this.halted.add(id);
+    for (const [instrumentId, recovery] of value.recovery ?? []) {
+      this.tickerState.set(instrumentId, {
+        eventAtUs: recovery.eventTime,
+        tradeId: "",
+        price: recovery.price,
+      });
+    }
     value.relay.bind({
       reconnect: () => this.circuitReconnect(),
       recovery: (reason) => this.record(null, reason),

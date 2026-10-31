@@ -199,7 +199,7 @@ function getSafeSqlState(error: unknown): string | undefined {
   return code;
 }
 
-function createPoolConfiguration(
+export function createPoolConfiguration(
   configuration: ReturnType<typeof loadDatabaseConfiguration>,
   environment: DatabaseConfigurationInput["environment"]
 ): PoolConfig {
@@ -227,7 +227,7 @@ function createPoolConfiguration(
   };
 }
 
-function createSslConfiguration(configuration: ReturnType<typeof loadDatabaseConfiguration>): PoolConfig["ssl"] {
+export function createSslConfiguration(configuration: ReturnType<typeof loadDatabaseConfiguration>): PoolConfig["ssl"] {
   if (configuration.ssl.mode === "disable") return false;
   if (configuration.ssl.mode === "require") return { rejectUnauthorized: true };
 

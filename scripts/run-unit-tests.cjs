@@ -11,6 +11,7 @@ const tests = [
   "auth.test.js",
   "market-data-contracts.test.js",
   "dependency-cruiser-negative.test.js",
+  "dependency-cruiser-lock-negative.test.js",
   "migration-immutability.test.js",
   "market-data-validation.test.js",
   "market-data-circuit.test.js",
@@ -19,6 +20,10 @@ const tests = [
   "market-data-wire-evidence.test.js",
   "market-data-session.test.js",
   "market-data-transport.test.js",
+  "advisory-lock.test.js",
+  "terms-gate.test.js",
+  "market-data-session-recovery.test.js",
+  "startup.test.js",
 ];
 
 for (const test of tests) {

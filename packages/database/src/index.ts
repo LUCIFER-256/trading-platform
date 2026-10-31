@@ -4,8 +4,11 @@ export {
 } from "./config";
 export {
   createDatabaseClient,
-  DatabaseInfrastructureError
+  DatabaseInfrastructureError,
+  createPoolConfiguration,
+  createSslConfiguration
 } from "./client";
+export { createDedicatedConnection } from "./dedicated-connection";
 export {
   DatabaseMigrationError,
   MIGRATION_NAME_PATTERN,
@@ -32,6 +35,7 @@ export type {
   DatabaseInfrastructureErrorCode,
   TransactionRunner
 } from "./client";
+export type { DedicatedConnection } from "./dedicated-connection";
 export type { MigrationRunReport, MigrationRunnerOptions } from "./migration-runner";
 export type { LedgerEntrySide, LedgerEventType, LedgerPostingFailure, LedgerPostingRequest } from "./ledger";
 export type { AppendMarketDataObservationRequest, AppendMarketDataQualityBucketRequest, ClearMarketDataHaltRequest, ClearMarketDataHaltResult, MarketDataBaseAvailability, MarketDataHaltReason, MarketDataStartupRecovery, OpenMarketDataHalt, OpenMarketDataHaltRequest, TransitionMarketDataStateRequest } from "./market-data-repository";
