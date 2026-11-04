@@ -24,6 +24,7 @@ export interface FakeProvider {
   rejectedClosed(): number;
   upgradeCount(): number;
   frameCount(): number;
+  openClients(): number;
   readonly upgradeRequests: readonly UpgradeRecord[];
   readonly receivedFrames: readonly string[];
   sendFrame(frame: object | string): void;
@@ -119,6 +120,9 @@ export async function startFakeProvider(options: FakeProviderOptions): Promise<F
     },
     get receivedFrames(): readonly string[] {
       return receivedFrames;
+    },
+    openClients(): number {
+      return clients.size;
     },
     sendFrame(frame: object | string): void {
       latest?.send(typeof frame === "string" ? frame : JSON.stringify(frame));

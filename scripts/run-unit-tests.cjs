@@ -24,6 +24,12 @@ const tests = [
   "terms-gate.test.js",
   "market-data-session-recovery.test.js",
   "startup.test.js",
+  "engine-guards.test.js",
+  "engine-config.test.js",
+  "engine-start.test.js",
+  "engine-policies.test.js",
+  "rest-fetcher.test.js",
+  "engine-main.test.js",
 ];
 
 for (const test of tests) {
