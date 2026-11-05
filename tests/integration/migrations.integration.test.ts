@@ -623,7 +623,7 @@ async function main(): Promise<void> {
       migrationLockTableName: `migration_it_main_lock_${nonce}`
     });
     log(`firstRun applied=${firstRun.applied.length}`);
-    assert(firstRun.applied.length === 7, "A fresh database must apply all platform migrations.");
+    assert(firstRun.applied.length === 8, "A fresh database must apply all platform migrations.");
     await assertSchemaExists(mainClient, "platform", true);
     log("schema exists OK");
     await assertCatalogSchema(mainClient);

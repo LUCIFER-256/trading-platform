@@ -396,7 +396,7 @@ async function runBeforeAfter(client: DatabaseClient, nonce: string): Promise<Be
   const names = { migrationTableName: `gates_migrations_${nonce}`, migrationLockTableName: `gates_lock_${nonce}` };
   try {
     const files = (await readdir(source)).filter((file) => file.endsWith(".js")).sort();
-    assert(files.length === 7, `Seven migrations are expected; found ${files.length}.`);
+    assert(files.length === 8, `Eight migrations are expected; found ${files.length}.`);
     for (const file of files.slice(0, 6)) await copyFile(path.join(source, file), path.join(temporary, file));
     await sql`drop schema if exists platform cascade`.execute(client.database);
     await runPendingMigrations(client, { migrationFolder: temporary, ...names });
@@ -405,6 +405,8 @@ async function runBeforeAfter(client: DatabaseClient, nonce: string): Promise<Be
     await copyFile(path.join(source, files[6]!), path.join(temporary, files[6]!));
     await runPendingMigrations(client, { migrationFolder: temporary, ...names });
     const after = await evaluateMatrix(client, matrix);
+    for (const file of files.slice(7)) await copyFile(path.join(source, file), path.join(temporary, file));
+    await runPendingMigrations(client, { migrationFolder: temporary, ...names });
     return { matrix, before, after };
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -552,9 +554,7 @@ async function openHalt(
     const row = await sql<{ id: string }>`select platform.open_market_data_halt(${world.providerId}, ${instrumentId}, ${reason},
       cast(${fields.eventAt ?? null} as timestamptz), cast(${fields.trade ?? null} as numeric), cast(${fields.sequence ?? null} as numeric),
       cast(${fields.price ?? null} as numeric), cast(${fields.size ?? null} as numeric),
-      cast(${fields.reference ?? null} as numeric)) id`.execute(
-      database,
-    );
+      cast(${fields.reference ?? null} as numeric)) id`.execute(database);
     return row.rows[0]!.id;
   });
 }
@@ -751,6 +751,13 @@ async function listOpenHaltsReturnsOnlyUnresolvedInOpenOrder(client: DatabaseCli
   console.log("listOpenHaltsReturnsOnlyUnresolvedInOpenOrder");
 }
 
+async function marketOf(client: DatabaseClient, instrumentId: string): Promise<string> {
+  const row = await sql<{ market_id: string }>`select market_id from platform.instruments where id = ${instrumentId}`.execute(
+    client.database,
+  );
+  return row.rows[0]!.market_id;
+}
+
 async function stateOf(client: DatabaseClient, instrumentId: string): Promise<string | undefined> {
   const row = await sql<{ base_availability: string }>`select base_availability from platform.market_data_instrument_state
     where instrument_id = ${instrumentId}`.execute(client.database);
@@ -884,13 +891,40 @@ async function transitionMarketDataStateRules(client: DatabaseClient, world: Wor
     "A provider-wide transition records one event with no instrument.",
   );
 
-  await transition(client, world.otherProviderId, "UNAVAILABLE_PERSISTENCE", "QUEUE_OVERFLOW", world.instrumentId);
+  const strayBefore = await recoveryEvents(client, world.otherProviderId, world.instrumentId);
+  await asRoleRejected(
+    client,
+    "platform_market_data",
+    (database) =>
+      sql`select platform.transition_market_data_state(${world.otherProviderId}, 'UNAVAILABLE_PERSISTENCE', 'QUEUE_OVERFLOW',
+        ${world.instrumentId})`.execute(database),
+    "22023",
+    "transition naming the wrong provider",
+  );
   assert(
     (await stateOf(client, world.instrumentId)) === "UNAVAILABLE_PROVIDER_CIRCUIT",
-    "A transition naming the wrong provider must not change another provider's state.",
+    "A transition naming the wrong provider must not change state.",
   );
-  const stray = await recoveryEvents(client, world.otherProviderId, world.instrumentId);
-  console.log(`observation: a wrong-provider instrument transition changed no state and recorded ${stray.length} event(s)`);
+  assert(
+    (await recoveryEvents(client, world.otherProviderId, world.instrumentId)).length === strayBefore.length,
+    "A transition naming the wrong provider must write no event.",
+  );
+  const unseen = await newInstrument(
+    client,
+    await marketOf(client, world.instrumentId),
+    world.providerId,
+    `${world.instrumentId.slice(-6)}z`,
+  );
+  await asRoleRejected(
+    client,
+    "platform_market_data",
+    (database) =>
+      sql`select platform.transition_market_data_state(${world.otherProviderId}, 'UNAVAILABLE_PERSISTENCE', 'QUEUE_OVERFLOW',
+        ${unseen})`.execute(database),
+    "22023",
+    "wrong provider for an instrument with no state",
+  );
+  assert((await stateOf(client, unseen)) === undefined, "A refused transition must not create a state row.");
 
   const view = await sql<{ availability: string }>`select availability from platform.market_data_effective_state
     where instrument_id = ${world.instrumentId}`.execute(client.database);
