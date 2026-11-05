@@ -29,6 +29,7 @@
     "test:market-data-persistence-integration:run": "node dist/tests/integration/market-data-persistence-port.integration.test.js",
     "test:market-data-startup-integration": "npm run build && node dist/tests/integration/market-data-startup.integration.test.js",
     "test:market-data-engine-integration": "npm run build && node dist/tests/integration/market-data-engine.integration.test.js",
+    "test:market-data-gates-integration": "npm run build && node dist/tests/integration/market-data-gates.integration.test.js",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "test:wire": "npm run build && node dist/tests/unit/market-data-wire.test.js"
   },
