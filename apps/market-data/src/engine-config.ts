@@ -28,9 +28,12 @@ const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
 const SYMBOL = /^[A-Z0-9]{2,12}-[A-Z0-9]{2,12}$/;
 
 function requiredUrl(value: string | undefined, protocol: "wss:" | "https:", code: "WS_ENDPOINT" | "REST_BASE_URL"): string {
+  if (value === undefined || /[^\x21-\x7e]/.test(value) || value.includes("\\")) {
+    throw new EngineConfigurationError(code);
+  }
   let parsed: URL;
   try {
-    parsed = new URL(value ?? "");
+    parsed = new URL(value);
   } catch {
     throw new EngineConfigurationError(code);
   }

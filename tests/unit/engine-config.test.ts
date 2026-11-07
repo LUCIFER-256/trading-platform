@@ -65,6 +65,26 @@ function unitEngineConfigurationParsesAndRefuses(): void {
   refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://sub.ws.example.invalid/feed" }, "HOST_NOT_ALLOWED");
   refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid.evil.invalid/feed" }, "HOST_NOT_ALLOWED");
   refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid./feed" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "[::1],api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "-ws.example.invalid,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid-,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: ".ws.example.invalid,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid.,api.example.invalid" }, "ALLOWED_HOSTS");
+  for (const unsafe of [
+    "wss://ws.example.invalid\t/feed",
+    "wss://ws.example.invalid\n.evil.invalid/feed",
+    "wss://ws.example.invalid /feed",
+    " wss://ws.example.invalid/feed",
+    "wss://ws.example.invalid/feed ",
+    "wss://ws.example.invalid\\@evil.invalid/feed",
+    "wss://ws.example.invalid\u0000/feed",
+    "wss://w\u00e9s.example.invalid/feed",
+  ]) {
+    refuses({ ...base, MARKET_DATA_WS_ENDPOINT: unsafe }, "WS_ENDPOINT");
+  }
+  refuses({ ...base, MARKET_DATA_REST_BASE_URL: "https://api.example.invalid\t" }, "REST_BASE_URL");
+  refuses({ ...base, MARKET_DATA_REST_BASE_URL: "https://api.example.invalid\\@evil.invalid" }, "REST_BASE_URL");
+  refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws%2eexample.invalid.evil.invalid/feed" }, "HOST_NOT_ALLOWED");
   const ported = parseEngineEnvironment({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid:8443/feed" });
   assert(ported.endpoint === "wss://ws.example.invalid:8443/feed", "The allowlist restricts hosts, not ports.");
   const spare = "ws.example.invalid,api.example.invalid,spare.example.invalid";

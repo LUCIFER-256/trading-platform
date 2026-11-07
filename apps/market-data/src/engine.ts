@@ -59,6 +59,18 @@ export class EngineStartError extends Error {
   }
 }
 
+export function sessionJumpResets(
+  resets: ReadonlyMap<string, { readonly confirmedPrice: string; readonly expiresAt: Date }>,
+): ReadonlyMap<string, { readonly confirmedPrice: DecimalString; readonly expiresAtMs: number }> {
+  const result = new Map<string, { readonly confirmedPrice: DecimalString; readonly expiresAtMs: number }>();
+  for (const [label, reset] of resets) {
+    const confirmedPrice = canonicalDecimal(reset.confirmedPrice);
+    if (confirmedPrice === undefined) throw new EngineStartError("SEED");
+    result.set(label, { confirmedPrice, expiresAtMs: reset.expiresAt.getTime() });
+  }
+  return result;
+}
+
 export interface EngineStartupSummary {
   readonly started: readonly string[];
   readonly skipped: Readonly<Record<string, string>>;
@@ -114,12 +126,7 @@ export class MarketDataEngine {
       if (price === undefined) throw new EngineStartError("SEED");
       recovery.set(label, { price, eventTime: seed.eventTime });
     }
-    const jumpResets = new Map<string, { readonly confirmedPrice: DecimalString; readonly expiresAtMs: number }>();
-    for (const [label, reset] of startup.jumpResets) {
-      const confirmedPrice = canonicalDecimal(reset.confirmedPrice);
-      if (confirmedPrice === undefined) throw new EngineStartError("SEED");
-      jumpResets.set(label, { confirmedPrice, expiresAtMs: reset.expiresAt.getTime() });
-    }
+    const jumpResets = sessionJumpResets(startup.jumpResets);
     const tracking = new TrackingScheduler(options.scheduler);
     const transport = new StoppableTransport(options.transport);
     const persistence = new GuardedPersistence(new PostgresPersistencePort(options.database, catalog.mapping));
