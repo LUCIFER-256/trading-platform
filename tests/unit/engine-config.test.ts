@@ -9,6 +9,7 @@ const base = {
   MARKET_DATA_REST_BASE_URL: "https://api.example.invalid",
   MARKET_DATA_INSTRUMENTS: "btcusd=BTC-USD,ethusd=ETH-USD",
   MARKET_DATA_TERMS_ACKNOWLEDGEMENT: "RA1_RISK_ACCEPTED",
+  MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid,api.example.invalid",
 };
 
 function refuses(environment: Record<string, string | undefined>, code: string): void {
@@ -50,6 +51,25 @@ function unitEngineConfigurationParsesAndRefuses(): void {
   refuses({ ...base, MARKET_DATA_EXTRA_CA_FILE: "/x/ca.pem" }, "EXTRA_CA");
   refuses({ ...base, PLATFORM_RUNTIME_MODE: "paper", MARKET_DATA_EXTRA_CA_FILE: "/x/ca.pem" }, "EXTRA_CA");
   refuses({ ...base, PLATFORM_RUNTIME_MODE: "test", MARKET_DATA_EXTRA_CA_FILE: "" }, "EXTRA_CA");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: undefined }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "*.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid:443,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid,,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "WS.example.invalid,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws..example.invalid,api.example.invalid" }, "ALLOWED_HOSTS");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "api.example.invalid" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://other.example.invalid/feed" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_REST_BASE_URL: "https://other.example.invalid" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://sub.ws.example.invalid/feed" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid.evil.invalid/feed" }, "HOST_NOT_ALLOWED");
+  refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid./feed" }, "HOST_NOT_ALLOWED");
+  const ported = parseEngineEnvironment({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid:8443/feed" });
+  assert(ported.endpoint === "wss://ws.example.invalid:8443/feed", "The allowlist restricts hosts, not ports.");
+  const spare = "ws.example.invalid,api.example.invalid,spare.example.invalid";
+  const mixed = parseEngineEnvironment({ ...base, MARKET_DATA_ALLOWED_HOSTS: spare });
+  assert(mixed.restBaseUrl === "https://api.example.invalid", "Extra allowed hosts must not be required.");
   console.log("unitEngineConfigurationParsesAndRefuses");
 }
 

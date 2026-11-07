@@ -10,6 +10,7 @@ import {
   type CatalogMapping,
   type CatalogRow,
 } from "./postgres-persistence-port";
+import { sqlState } from "./sql-state";
 
 export type StartupSkipReason = "NO_POLICY" | "DISABLED_SCOPE" | "HUMAN_HALT" | "RECOVERY_ERROR";
 
@@ -213,12 +214,5 @@ async function inspectScope(
 }
 
 function safeRecoveryError(error: unknown): StartupRecoveryError {
-  const sqlState = error !== null
-    && typeof error === "object"
-    && "code" in error
-    && typeof error.code === "string"
-    && /^[0-9A-Z]{5}$/.test(error.code)
-    ? error.code
-    : undefined;
-  return new StartupRecoveryError(sqlState);
+  return new StartupRecoveryError(sqlState(error));
 }

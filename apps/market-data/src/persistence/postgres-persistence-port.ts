@@ -20,6 +20,7 @@ import type {
   PersistencePort,
   TransitionStateRequest,
 } from "../ports";
+import { sqlState } from "./sql-state";
 
 const HALT_REASONS = new Set<MarketDataHaltReason>([
   "LOCKED_OR_CROSSED", "OUT_OF_ORDER_MATCH_ID", "IN_SESSION_MATCH_GAP",
@@ -215,14 +216,7 @@ function haltReason(value: string): MarketDataHaltReason {
   return value as MarketDataHaltReason;
 }
 function safeError(operation: PostgresPersistenceError["operation"], error: unknown): PostgresPersistenceError {
-  const sqlState = error !== null
-    && typeof error === "object"
-    && "code" in error
-    && typeof error.code === "string"
-    && /^[0-9A-Z]{5}$/.test(error.code)
-    ? error.code
-    : undefined;
-  return new PostgresPersistenceError(operation, sqlState);
+  return new PostgresPersistenceError(operation, sqlState(error));
 }
 export function uuidV7(now = Date.now()): string {
   const bytes = randomBytes(16);

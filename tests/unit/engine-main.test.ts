@@ -1,6 +1,7 @@
 import { AdvisoryLockError } from "../../apps/market-data/src/advisory-lock";
 import { EngineConfigurationError } from "../../apps/market-data/src/engine-config";
-import { failureFields } from "../../apps/market-data/src/main";
+import { STOP_DRAIN_MS } from "../../apps/market-data/src/engine";
+import { EXIT_ABORT, EXIT_FAILURE, EXIT_LOCK_HELD, EXIT_OK, failureFields } from "../../apps/market-data/src/main";
 import { TermsGateError } from "../../apps/market-data/src/terms-gate";
 
 function assert(value: unknown, message: string): asserts value {
@@ -23,4 +24,14 @@ function unitEntrypointFailureFieldsAreSafe(): void {
   console.log("unitEntrypointFailureFieldsAreSafe");
 }
 
+function unitSupervisorContractIsPinnedToLiterals(): void {
+  assert(EXIT_OK === 0, "A clean stop must exit 0.");
+  assert(EXIT_FAILURE === 1, "A failed start must exit 1.");
+  assert(EXIT_LOCK_HELD === 3, "A held lock must exit 3.");
+  assert(EXIT_ABORT === 70, "A lost lock must exit 70.");
+  assert(STOP_DRAIN_MS === 1_500, "The shutdown drain window must be 1,500 ms.");
+  console.log("unitSupervisorContractIsPinnedToLiterals");
+}
+
 unitEntrypointFailureFieldsAreSafe();
+unitSupervisorContractIsPinnedToLiterals();

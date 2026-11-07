@@ -3,6 +3,7 @@ import { canonicalDecimal } from "../../../../packages/market-data/src";
 import type { DecimalString } from "../../../../packages/shared/src";
 import { agreedProviderPolicy, type ProviderPolicy } from "../circuit";
 import type { CatalogMapping } from "./postgres-persistence-port";
+import { sqlState } from "./sql-state";
 
 export interface InstrumentPolicy {
   readonly priceIncrement: DecimalString;
@@ -61,11 +62,6 @@ const repository: PolicyRepository = {
     return result.rows;
   },
 };
-
-function sqlState(error: unknown): string | undefined {
-  const code = error !== null && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
-}
 
 export async function loadEnginePolicies(
   database: KyselyDatabase,

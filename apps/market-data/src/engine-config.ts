@@ -7,7 +7,8 @@ export class EngineConfigurationError extends Error {
   public readonly name = "EngineConfigurationError";
 
   public constructor(readonly code:
-    "RUNTIME_MODE" | "LIVE_MODE" | "EXTRA_CA" | "WS_ENDPOINT" | "REST_BASE_URL" | "INSTRUMENTS" | "FLUSH_INTERVAL") {
+    "RUNTIME_MODE" | "LIVE_MODE" | "EXTRA_CA" | "WS_ENDPOINT" | "REST_BASE_URL" | "INSTRUMENTS" | "FLUSH_INTERVAL"
+    | "ALLOWED_HOSTS" | "HOST_NOT_ALLOWED") {
     super(`Market-data engine configuration is invalid: ${code}.`);
   }
 }
@@ -23,6 +24,7 @@ export interface EngineConfiguration {
 }
 
 const LABEL = /^[a-z][a-z0-9]{0,15}$/;
+const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
 const SYMBOL = /^[A-Z0-9]{2,12}-[A-Z0-9]{2,12}$/;
 
 function requiredUrl(value: string | undefined, protocol: "wss:" | "https:", code: "WS_ENDPOINT" | "REST_BASE_URL"): string {
@@ -36,6 +38,16 @@ function requiredUrl(value: string | undefined, protocol: "wss:" | "https:", cod
     throw new EngineConfigurationError(code);
   }
   return value!;
+}
+
+function allowedHosts(value: string | undefined): ReadonlySet<string> {
+  if (value === undefined || value.length === 0) throw new EngineConfigurationError("ALLOWED_HOSTS");
+  const hosts = new Set<string>();
+  for (const host of value.split(",")) {
+    if (!HOST.test(host) || host.includes("..")) throw new EngineConfigurationError("ALLOWED_HOSTS");
+    hosts.add(host);
+  }
+  return hosts;
 }
 
 function instruments(value: string | undefined): CatalogConfiguration["instruments"] {
@@ -70,10 +82,16 @@ export function parseEngineEnvironment(environment: EngineEnvironment): EngineCo
   if (extraCaFile !== undefined && (mode.value !== "test" || extraCaFile.length === 0)) {
     throw new EngineConfigurationError("EXTRA_CA");
   }
+  const hosts = allowedHosts(environment.MARKET_DATA_ALLOWED_HOSTS);
+  const endpoint = requiredUrl(environment.MARKET_DATA_WS_ENDPOINT, "wss:", "WS_ENDPOINT");
+  const restBaseUrl = requiredUrl(environment.MARKET_DATA_REST_BASE_URL, "https:", "REST_BASE_URL");
+  if (!hosts.has(new URL(endpoint).hostname) || !hosts.has(new URL(restBaseUrl).hostname)) {
+    throw new EngineConfigurationError("HOST_NOT_ALLOWED");
+  }
   return {
     runtimeMode: mode.value,
-    endpoint: requiredUrl(environment.MARKET_DATA_WS_ENDPOINT, "wss:", "WS_ENDPOINT"),
-    restBaseUrl: requiredUrl(environment.MARKET_DATA_REST_BASE_URL, "https:", "REST_BASE_URL"),
+    endpoint,
+    restBaseUrl,
     catalog: { providerLabel: "coinbase", instruments: instruments(environment.MARKET_DATA_INSTRUMENTS) },
     termsAcknowledgement: environment.MARKET_DATA_TERMS_ACKNOWLEDGEMENT,
     qualityFlushIntervalMs,

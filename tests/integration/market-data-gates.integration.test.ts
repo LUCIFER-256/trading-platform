@@ -148,6 +148,52 @@ async function relationPrivilegeSnapshot(client: DatabaseClient): Promise<void> 
   }
 }
 
+const COLUMN_ONLY_GRANTS: Record<string, readonly string[]> = {
+  "instruments|market_data|s": ["enabled", "id", "market_id", "price_increment", "size_increment"],
+  "instruments|owner|i": ["enabled", "instrument_code", "market_id", "price_increment", "size_increment"],
+  "instruments|owner|s": ["enabled", "id", "instrument_code", "market_id", "price_increment", "size_increment"],
+  "instruments|owner|u": ["enabled", "price_increment", "size_increment"],
+  "markets|market_data|s": ["enabled", "id"],
+  "markets|owner|i": ["enabled", "market_code"],
+  "markets|owner|s": ["enabled", "id", "market_code"],
+  "markets|owner|u": ["enabled"],
+  "password_credentials|runtime|s": ["credential_version", "password_hash", "user_id"],
+  "provider_instrument_symbols|market_data|s": ["enabled", "instrument_id", "provider_id", "provider_symbol"],
+  "provider_instrument_symbols|owner|i": ["enabled", "instrument_id", "provider_id", "provider_symbol"],
+  "provider_instrument_symbols|owner|s": ["enabled", "instrument_id", "provider_id", "provider_symbol"],
+  "provider_instrument_symbols|owner|u": ["enabled"],
+  "providers|market_data|s": ["enabled", "id"],
+  "providers|owner|i": ["provider_code"],
+  "providers|owner|s": ["enabled", "id", "provider_code"],
+  "users|runtime|s": ["enabled", "id", "password_login_locked_until", "user_code"],
+};
+
+async function columnPrivilegeSnapshot(client: DatabaseClient): Promise<void> {
+  const rows = await sql<{ relname: string; attname: string; rolname: string; privilege: string }>`
+    select c.relname, a.attname, r.rolname, p.privilege
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    cross join unnest(${sql.val([...ROLES])}::text[]) as r(rolname)
+    cross join (values ('select'), ('insert'), ('update'), ('references')) as p(privilege)
+    where n.nspname = 'platform' and c.relkind in ('r', 'v')
+      and has_column_privilege(r.rolname, c.oid, a.attnum, p.privilege)
+      and not has_table_privilege(r.rolname, c.oid, p.privilege)
+    order by 1, 3, 4, 2`.execute(client.database);
+  const actual: Record<string, string[]> = {};
+  for (const row of rows.rows) {
+    const key = `${row.relname}|${SHORT(row.rolname)}|${row.privilege[0]}`;
+    (actual[key] ??= []).push(row.attname);
+  }
+  for (const columns of Object.values(actual)) columns.sort();
+  const sortKeys = (value: Record<string, readonly string[]>): string =>
+    JSON.stringify(Object.keys(value).sort().map((key) => [key, value[key]]));
+  assert(
+    sortKeys(actual) === sortKeys(COLUMN_ONLY_GRANTS),
+    `Column-only privileges must match the literal snapshot; actual ${JSON.stringify(actual)}.`,
+  );
+}
+
 const FUNCTION_EXECUTE: Record<string, readonly string[]> = {
   append_audit_event: ["owner"],
   append_market_data_observation: ["market_data", "owner"],
@@ -396,7 +442,11 @@ async function runBeforeAfter(client: DatabaseClient, nonce: string): Promise<Be
   const names = { migrationTableName: `gates_migrations_${nonce}`, migrationLockTableName: `gates_lock_${nonce}` };
   try {
     const files = (await readdir(source)).filter((file) => file.endsWith(".js")).sort();
-    assert(files.length === 8, `Eight migrations are expected; found ${files.length}.`);
+    assert(files.length >= 8, `At least eight migrations are expected; found ${files.length}.`);
+    assert(
+      files[6]!.startsWith("20261016090000_market_data_engine"),
+      `The seventh migration must be the Phase 5 migration; found ${files[6]}.`,
+    );
     for (const file of files.slice(0, 6)) await copyFile(path.join(source, file), path.join(temporary, file));
     await sql`drop schema if exists platform cascade`.execute(client.database);
     await runPendingMigrations(client, { migrationFolder: temporary, ...names });
@@ -926,6 +976,41 @@ async function transitionMarketDataStateRules(client: DatabaseClient, world: Wor
   );
   assert((await stateOf(client, unseen)) === undefined, "A refused transition must not create a state row.");
 
+  const shared = await newInstrument(
+    client,
+    await marketOf(client, world.instrumentId),
+    world.providerId,
+    `${world.instrumentId.slice(-6)}m`,
+  );
+  await transition(client, world.providerId, "UNAVAILABLE_PERSISTENCE", "QUEUE_OVERFLOW", shared);
+  await sql`insert into platform.provider_instrument_symbols(provider_id, instrument_id, provider_symbol, enabled)
+    values (${world.otherProviderId}, ${shared}, ${`GSHARED${world.instrumentId.slice(-6).toUpperCase()}-USD`}, true)`.execute(
+    client.database,
+  );
+  const sharedEventsBefore = (await recoveryEvents(client, world.otherProviderId, shared)).length;
+  await asRoleRejected(
+    client,
+    "platform_market_data",
+    (database) =>
+      sql`select platform.transition_market_data_state(${world.otherProviderId}, 'UNAVAILABLE_REBASELINING', 'HEARTBEAT_TIMEOUT',
+        ${shared})`.execute(database),
+    "55000",
+    "second mapped provider against state owned by the first",
+  );
+  assert(
+    (await stateOf(client, shared)) === "UNAVAILABLE_PERSISTENCE",
+    "A second provider must not change state owned by the first.",
+  );
+  assert(
+    (await recoveryEvents(client, world.otherProviderId, shared)).length === sharedEventsBefore,
+    "A refused second-provider transition must write no event.",
+  );
+  await transition(client, world.providerId, "UNAVAILABLE_REBASELINING", "HEARTBEAT_TIMEOUT", shared);
+  assert(
+    (await stateOf(client, shared)) === "UNAVAILABLE_REBASELINING",
+    "The owning provider must still be able to transition its own state.",
+  );
+
   const view = await sql<{ availability: string }>`select availability from platform.market_data_effective_state
     where instrument_id = ${world.instrumentId}`.execute(client.database);
   assert(view.rows[0]?.availability === "UNAVAILABLE_PROVIDER_CIRCUIT", "The effective view must show the transition.");
@@ -948,7 +1033,15 @@ async function transitionMarketDataStateRules(client: DatabaseClient, world: Wor
   console.log("transitionMarketDataStateRules");
 }
 
+function assertDisposableDatabase(url: string | undefined): void {
+  const name = url === undefined ? "" : decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+  if (!/test/i.test(name)) {
+    throw new Error("TEST_DATABASE_URL must name a database whose name contains 'test'; this suite drops schema platform.");
+  }
+}
+
 async function main(): Promise<void> {
+  assertDisposableDatabase(process.env.TEST_DATABASE_URL);
   const client = createDatabaseClient({ runtimeMode: "test", environment: environment() });
   const nonce = `${process.pid}${Date.now()}`;
   try {
@@ -958,6 +1051,8 @@ async function main(): Promise<void> {
     await marketDataClearRequiresSuperAdminGlobalPermission(client);
     await relationPrivilegeSnapshot(client);
     console.log("relationPrivilegeSnapshot");
+    await columnPrivilegeSnapshot(client);
+    console.log("columnPrivilegeSnapshot");
     await functionExecuteMatrix(client);
     console.log("functionExecuteMatrix");
     await catalogColumnWritePrivileges(client);

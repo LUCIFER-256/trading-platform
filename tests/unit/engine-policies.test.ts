@@ -79,6 +79,11 @@ async function unitEnginePoliciesLoadAndRefuse(): Promise<void> {
   const database = await refuses([], ["btc"], "DATABASE", failing);
   assert(database.message.includes("42501"), "The SQLSTATE may be reported.");
   assert(!/secret|postgres:|pw@/.test(database.message), "The database message must not leak.");
+  const network: PolicyRepository = {
+    policyRows: () => Promise.reject(Object.assign(new Error("socket detail"), { code: "EPIPE" })),
+  };
+  const refused = await refuses([], ["btc"], "DATABASE", network);
+  assert(!refused.message.includes("EPIPE") && !refused.message.includes("SQLSTATE"), "A network error code is not a SQLSTATE.");
   console.log("unitEnginePoliciesLoadAndRefuse");
 }
 

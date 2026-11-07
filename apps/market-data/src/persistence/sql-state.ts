@@ -1,0 +1,52 @@
+const SQLSTATE_CLASSES: ReadonlySet<string> = new Set([
+  "00",
+  "01",
+  "02",
+  "03",
+  "08",
+  "09",
+  "0A",
+  "0B",
+  "0F",
+  "0L",
+  "0P",
+  "0Z",
+  "20",
+  "21",
+  "22",
+  "23",
+  "24",
+  "25",
+  "26",
+  "27",
+  "28",
+  "2B",
+  "2D",
+  "2F",
+  "34",
+  "38",
+  "39",
+  "3B",
+  "3D",
+  "3F",
+  "40",
+  "42",
+  "44",
+  "53",
+  "54",
+  "55",
+  "57",
+  "58",
+  "72",
+  "F0",
+  "HV",
+  "P0",
+  "XX",
+]);
+
+export function sqlState(error: unknown): string | undefined {
+  const code =
+    error !== null && typeof error === "object" && "code" in error ? (error as { readonly code?: unknown }).code : undefined;
+  if (typeof code !== "string" || !/^[0-9A-Z]{5}$/.test(code)) return undefined;
+  return SQLSTATE_CLASSES.has(code.slice(0, 2)) ? code : undefined;
+}

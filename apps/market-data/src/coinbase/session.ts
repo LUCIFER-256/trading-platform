@@ -101,6 +101,13 @@ export interface SessionOptions {
       readonly eventTime: string;
     }
   >;
+  readonly jumpResets?: ReadonlyMap<
+    string,
+    {
+      readonly confirmedPrice: DecimalString;
+      readonly expiresAtMs: number;
+    }
+  >;
   readonly transport: WireTransport;
   readonly products: CoinbaseProductAssertions;
   readonly circuit: ProviderCircuit;
@@ -125,6 +132,10 @@ export class CoinbaseSession {
       price: DecimalString;
     }
   >();
+  private readonly pendingResets = new Map<
+    string,
+    { readonly confirmedPrice: DecimalString; readonly expiresAtMs: number }
+  >();
   private attempt = 0;
   private reconnectTimer: TimerToken | undefined;
   private blockedTimer: TimerToken | undefined;
@@ -142,6 +153,9 @@ export class CoinbaseSession {
         tradeId: "",
         price: recovery.price,
       });
+    }
+    for (const [instrumentId, reset] of value.jumpResets ?? []) {
+      this.pendingResets.set(instrumentId, reset);
     }
     value.relay.bind({
       reconnect: () => this.circuitReconnect(),
@@ -356,6 +370,11 @@ export class CoinbaseSession {
       return;
     }
     const state = this.tickerState.get(item.instrumentId);
+    const reset = this.pendingResets.get(item.instrumentId);
+    const resetReference =
+      reset !== undefined && reset.expiresAtMs > this.value.clock.nowMs()
+        ? reset.confirmedPrice
+        : undefined;
     const result = validateTicker(parsed.value, {
       ...item.ticker,
       enabled: true,
@@ -365,7 +384,7 @@ export class CoinbaseSession {
         : {
             lastAcceptedEventAtUs: state.eventAtUs,
             lastAcceptedTradeId: state.tradeId,
-            referencePrice: state.price,
+            referencePrice: resetReference ?? state.price,
           }),
     });
     if (result.outcome === "REJECTED") {
@@ -389,6 +408,7 @@ export class CoinbaseSession {
       );
       return;
     }
+    this.pendingResets.delete(item.instrumentId);
     this.tickerState.set(item.instrumentId, {
       eventAtUs: parsed.value.eventAtUs,
       tradeId: parsed.value.tradeId,

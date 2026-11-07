@@ -30,6 +30,8 @@ const tests = [
   "engine-policies.test.js",
   "rest-fetcher.test.js",
   "engine-main.test.js",
+  "session-jump-reset.test.js",
+  "sql-state.test.js",
 ];
 
 for (const test of tests) {

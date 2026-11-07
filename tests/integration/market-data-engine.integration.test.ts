@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Client as PgClient } from "pg";
+import { createTestPasswordHasher } from "../../apps/api/src/auth";
 import {
   createDatabaseClient,
   runPendingMigrations,
@@ -494,6 +495,7 @@ class EngineProcess {
         ...databaseEnvironment(roleUrl("platform_market_data")),
         MARKET_DATA_WS_ENDPOINT: stage.provider.url,
         MARKET_DATA_REST_BASE_URL: stage.restUrl,
+        MARKET_DATA_ALLOWED_HOSTS: "127.0.0.1",
         MARKET_DATA_INSTRUMENTS: `${world.label}=${world.symbol}`,
         MARKET_DATA_TERMS_ACKNOWLEDGEMENT: "RA1_RISK_ACCEPTED",
         MARKET_DATA_EXTRA_CA_FILE: stage.caFile,
@@ -699,6 +701,66 @@ async function engineRestartKeepsJumpGuard(owner: DatabaseClient, stage: Stage, 
   }
 }
 
+async function superAdminSession(client: DatabaseClient, label: string): Promise<{ readonly id: string; readonly secret: string }> {
+  const user = await sql<{ readonly id: string }>`insert into platform.users(user_code, enabled)
+    values (${label}, true) returning id`.execute(client.database);
+  const userId = user.rows[0]!.id;
+  const hash = await createTestPasswordHasher().hash("integration-password");
+  await sql`insert into platform.password_credentials(user_id, password_hash, credential_version)
+    values (${userId}, ${hash}, 1)`.execute(client.database);
+  await sql`insert into platform.account_role_assignments(user_id, account_id, role, enabled)
+    values (${userId}, null, 'SUPER_ADMIN', true)`.execute(client.database);
+  const secret = `${label}-session-secret-sufficiently-long`;
+  const row = await sql<{ readonly id: string }>`select platform.create_auth_session(${userId}, ${secret}, 1,
+    clock_timestamp() + interval '30 minutes', clock_timestamp() + interval '8 hours') as id`.execute(client.database);
+  return { id: row.rows[0]!.id, secret };
+}
+
+async function engineHonorsConfirmedResetAfterRestart(owner: DatabaseClient, stage: Stage, world: World): Promise<void> {
+  const reader = await ViewReader.open();
+  try {
+    const first = await startEngine(stage, world, "RA1_RISK_ACCEPTED");
+    await feed(stage.provider, world.symbol, 1, 3);
+    await waitFor(async () => (await observationCount(owner, world.instrumentId)) === 3, "first run persists three observations");
+    await feed(stage.provider, world.symbol, 4, 1, { base: 200 });
+    await waitFor(
+      async () => (await reader.read(world.instrumentId))?.availability === "UNAVAILABLE_HUMAN_HALT",
+      "the large jump halts the instrument",
+    );
+    await stopEngine(first);
+    const halt = await sql<{ readonly id: string; readonly candidate: string }>`select id, candidate_price::text as candidate
+      from platform.market_data_halts where instrument_id = ${world.instrumentId} and reason_code = 'PRICE_JUMP'`.execute(owner.database);
+    assert(halt.rows.length === 1, "Exactly one PRICE_JUMP halt must exist before the clear.");
+    const session = await superAdminSession(owner, `reset-${process.pid}-${Date.now()}`);
+    await sql`select * from platform.clear_market_data_halt(${session.id}, ${session.secret}, ${halt.rows[0]!.id},
+      ${world.instrumentId}, 'confirmed reset test', ${halt.rows[0]!.candidate}::numeric)`.execute(owner.database);
+    const second = await startEngine(stage, world, "RA1_RISK_ACCEPTED");
+    try {
+      await feed(stage.provider, world.symbol, 5, 3, { connection: 2, base: 200 });
+      await waitFor(
+        async () => (await observationCount(owner, world.instrumentId)) === 6,
+        "the restarted engine accepts the confirmed price and the ticks after it",
+      );
+      assert(
+        (await reader.read(world.instrumentId))?.availability === "AVAILABLE",
+        "The instrument must be available after the confirmed reset is used.",
+      );
+      const counts = await sql<{ readonly halts: string; readonly consumed: string }>`select
+        (select count(*)::text from platform.market_data_halts where instrument_id = ${world.instrumentId}) as halts,
+        (select count(*)::text from platform.market_data_jump_reset_consumptions c
+          join platform.market_data_jump_resets r on r.id = c.reset_id where r.instrument_id = ${world.instrumentId}) as consumed`
+        .execute(owner.database);
+      assert(counts.rows[0]?.halts === "1", "No further halt may be recorded after the confirmed reset.");
+      assert(counts.rows[0]?.consumed === "1", "The reset must be consumed exactly once.");
+    } finally {
+      await stopEngine(second);
+    }
+    console.log("engineHonorsConfirmedResetAfterRestart");
+  } finally {
+    await reader.close();
+  }
+}
+
 class ShiftClock {
   public offsetMs = 0;
 
@@ -813,7 +875,15 @@ async function processRefusesWithoutTermsAcknowledgement(stage: Stage, world: Wo
   console.log("processRefusesWithoutTermsAcknowledgement");
 }
 
+function assertDisposableDatabase(url: string | undefined): void {
+  const name = url === undefined ? "" : decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+  if (!/test/i.test(name)) {
+    throw new Error("TEST_DATABASE_URL must name a database whose name contains 'test'; this suite drops schema platform.");
+  }
+}
+
 async function main(): Promise<void> {
+  assertDisposableDatabase(process.env.TEST_DATABASE_URL);
   assert(fs.existsSync(MAIN_PATH), `Built entrypoint must exist at ${MAIN_PATH}.`);
   const owner = createDatabaseClient({
     runtimeMode: "test",
@@ -846,6 +916,8 @@ async function main(): Promise<void> {
     await engineStartFailureReleasesLock(owner, await openNew(), releaseWorld);
     const restartWorld = await buildWorld(owner, `${suffix}j`);
     await engineRestartKeepsJumpGuard(owner, await openNew(), restartWorld);
+    const resetWorld = await buildWorld(owner, `${suffix}c`);
+    await engineHonorsConfirmedResetAfterRestart(owner, await openNew(), resetWorld);
     const flushWorld = await buildWorld(owner, `${suffix}q`);
     await engineFlushesClosedQualityBucketOnce(owner, await openNew(), flushWorld);
     const killWorld = await buildWorld(owner, `${suffix}k`);

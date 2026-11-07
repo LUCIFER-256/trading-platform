@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
@@ -623,7 +623,11 @@ async function main(): Promise<void> {
       migrationLockTableName: `migration_it_main_lock_${nonce}`
     });
     log(`firstRun applied=${firstRun.applied.length}`);
-    assert(firstRun.applied.length === 8, "A fresh database must apply all platform migrations.");
+    const migrationFiles = (await readdir(migrationDirectory)).filter(
+      (file) => /\.(js|mjs)$/.test(file) || (/\.(ts|mts)$/.test(file) && !/\.d\.m?ts$/.test(file)),
+    );
+    assert(migrationFiles.length >= 8, "The migration folder must hold at least the eight known migrations.");
+    assert(firstRun.applied.length === migrationFiles.length, "A fresh database must apply every migration file in the folder.");
     await assertSchemaExists(mainClient, "platform", true);
     log("schema exists OK");
     await assertCatalogSchema(mainClient);
