@@ -7,12 +7,14 @@ Status: DRAFT for the user's approval. Nothing in this document connects anywher
 RA-1 is a risk acceptance, not clearance. The gate stays open and no Coinbase reply is recorded.
 Hard limits stay in force during the run: one user only, no redistribution, no indexes, benchmarks, fair-value or valuations, no AI or ML use of the data.
 
-## Decisions the user must make before approval
+## Decisions recorded
 
-1. Power. Choose one and write it into the ledger.
+The user chose Option B and manual restart on 2026-11-08. The ledger records the choice. The options stay listed below for reference.
+
+1. Power. Chosen: Option B.
    - Option A: continuous 24 hours. Needs a UPS that powers the PC, the router and the modem. The laptop battery is dead, so any mains cut stops everything.
-   - Option B (recommended): accumulated 24 hours. Every power cut is logged, the engine is restarted by hand, and the window counts total engine uptime. Each restart starts a new log file.
-2. Whether the engine should be restarted by hand (default) or by a service file. A service file is new code and is not part of this runbook.
+   - Option B (chosen): accumulated 24 hours. Every power cut is logged, the engine is restarted by hand, and the window counts total engine uptime. Each restart starts a new log file.
+2. Restart. Chosen: by hand. A service file would be new code and is not part of this runbook.
 
 ## Environment for the real run (development mode only)
 
@@ -83,11 +85,19 @@ df -h
 ```
 
 Check the first hour every 10 minutes, then about every two hours. A line with `"event":"fatal"` or `"event":"abort"` means the engine has stopped.
+About 70 seconds after start, a line with `"event":"heartbeat"` must appear. If none appears, stop the run and tell the auditor: the heartbeat logging is not working.
 
-## What the engine records, and the limit on heartbeat evidence
+## What the engine records about heartbeats
 
-The engine logs a `session` line only for reconnects, failed attempts, queue and persistence recoveries and remediation. The reason is `HEARTBEAT_TIMEOUT`, `HEARTBEAT_GAP`, `QUEUE_OVERFLOW`, `PERSISTENCE_TIMEOUT`, `NETWORK`, `PERSISTENCE`, `CONFIGURATION` or `REMEDIATION_REQUIRED`.
-It does not log each heartbeat interval. So the run cannot report the longest heartbeat gap directly. It can report how many `HEARTBEAT_TIMEOUT` and `HEARTBEAT_GAP` events occurred and whether each coincided with a real outage. The nearest measured proxy is the gap between accepted observations, from the query below. Measuring the heartbeat interval itself would need new logging code. That is a scope decision for the user and is not part of this runbook.
+The engine logs a `session` line for reconnects, failed attempts, queue and persistence recoveries and remediation. The reason is `HEARTBEAT_TIMEOUT`, `HEARTBEAT_GAP`, `QUEUE_OVERFLOW`, `PERSISTENCE_TIMEOUT`, `NETWORK`, `PERSISTENCE`, `CONFIGURATION` or `REMEDIATION_REQUIRED`.
+It also logs a `heartbeat` line about every 60 seconds for each instrument. The line holds `instrumentId`, `intervals` (how many heartbeat gaps the window measured), `maxIntervalMs` (the longest gap in the window), `windowMs` (the real window length) and `correlationId`. It holds no price, size or trade id. The window restarts after every reconnect, so a gap that ends in a reconnect shows up as a `HEARTBEAT_TIMEOUT` line, not in a `heartbeat` line. The timeout is 5,000 ms, so no gap above 5,000 ms can appear in a `heartbeat` line.
+
+```
+grep -h '"event":"heartbeat"' ~/market-data-run/engine-*.log | wc -l
+grep -h '"event":"heartbeat"' ~/market-data-run/engine-*.log | grep -o '"maxIntervalMs":[0-9]*' | cut -d: -f2 | sort -n | tail -5
+```
+
+The first command counts the summaries (about 60 per hour). The second prints the five longest heartbeat gaps of the run in milliseconds. A gap between observations is a second, separate measure, from the query below.
 
 ```
 psql "$OWNER_DATABASE_URL" -c "select received_at as before_gap, next_at as after_gap, next_at - received_at as gap from (select received_at, lead(received_at) over (order by received_at) as next_at from platform.market_data_observations where received_at >= '<RUN_START>') t where next_at - received_at > interval '60 seconds' order by gap desc limit 20"
@@ -118,4 +128,4 @@ psql "$OWNER_DATABASE_URL" -c "select received_at as before_gap, next_at as afte
 
 ## Evidence to record after the run
 
-Send the auditor: window start and end in UTC; number of restarts and each outage's start, end and length; connection and reconnect counts by `session` reason; number of `HEARTBEAT_TIMEOUT` and `HEARTBEAT_GAP` events; number of halts with reason codes; the five longest gaps between observations; the effective-state check after a controlled stop; the exit code of each engine run; the disk used. The user decides any change to the 5,000 ms heartbeat timeout.
+Send the auditor: window start and end in UTC; number of restarts and each outage's start, end and length; connection and reconnect counts by `session` reason; number of `HEARTBEAT_TIMEOUT` and `HEARTBEAT_GAP` events; the number of `heartbeat` summary lines; number of halts with reason codes; the five longest heartbeat gaps from the `heartbeat` lines and the five longest gaps between observations; the effective-state check after a controlled stop; the exit code of each engine run; the disk used. The user decides any change to the 5,000 ms heartbeat timeout.
