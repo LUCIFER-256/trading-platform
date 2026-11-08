@@ -82,7 +82,7 @@ interface World {
   readonly providerUuid: string;
   readonly symbol: string;
   readonly label: string;
-  readonly catalog: { providerLabel: string; instruments: { label: string; symbol: string }[] };
+  readonly catalog: { providerLabel: string; providerUuid: string; instruments: { label: string; symbol: string }[] };
 }
 
 let worldCounter = 0;
@@ -112,7 +112,7 @@ async function buildWorld(
     providerUuid: provider.rows[0]!.id,
     symbol,
     label: "btcusd",
-    catalog: { providerLabel: "coinbase", instruments: [{ label: "btcusd", symbol }] },
+    catalog: { providerLabel: "coinbase", providerUuid: provider.rows[0]!.id, instruments: [{ label: "btcusd", symbol }] },
   };
 }
 
@@ -497,6 +497,7 @@ class EngineProcess {
         MARKET_DATA_REST_BASE_URL: stage.restUrl,
         MARKET_DATA_ALLOWED_HOSTS: "127.0.0.1",
         MARKET_DATA_INSTRUMENTS: `${world.label}=${world.symbol}`,
+        MARKET_DATA_PROVIDER_ID: world.providerUuid,
         MARKET_DATA_TERMS_ACKNOWLEDGEMENT: "RA1_RISK_ACCEPTED",
         MARKET_DATA_EXTRA_CA_FILE: stage.caFile,
         MARKET_DATA_QUALITY_FLUSH_INTERVAL_MS: "500",
@@ -627,7 +628,7 @@ async function sigtermEngineStopsGracefully(stage: Stage, world: World): Promise
 async function engineStartFailureReleasesLock(owner: DatabaseClient, stage: Stage, world: World): Promise<void> {
   const unmapped: World = {
     ...world,
-    catalog: { providerLabel: "coinbase", instruments: [{ label: "ghost", symbol: "NOPE-USD" }] },
+    catalog: { providerLabel: "coinbase", providerUuid: world.providerUuid, instruments: [{ label: "ghost", symbol: "NOPE-USD" }] },
   };
   let refusal: unknown;
   try {

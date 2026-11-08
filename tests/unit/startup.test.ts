@@ -14,6 +14,7 @@ function assert(value: unknown, message: string): asserts value {
 
 const configuration: CatalogConfiguration = {
   providerLabel: "coinbase",
+  providerUuid: "provider-id",
   instruments: [
     { label: "active", symbol: "ACTIVE-USD" },
     { label: "policyless", symbol: "POLICYLESS-USD" },
@@ -103,7 +104,7 @@ async function startupNoRowIsFreshStart(): Promise<void> {
   const result = await recoverMarketDataStartup({} as KyselyDatabase, {
     ...mapping,
     instrumentsByLabel: new Map([["active", "active-id"]]),
-  }, { providerLabel: "coinbase", instruments: [configuration.instruments[0]!] }, fresh);
+  }, { providerLabel: "coinbase", providerUuid: "provider-id", instruments: [configuration.instruments[0]!] }, fresh);
   assert(result.started[0]?.label === "active", "No state row must begin as a fresh start.");
   assert(!result.recovery.has("active"), "Fresh start must not have a seed.");
   console.log("startupNoRowIsFreshStart");
@@ -124,6 +125,7 @@ const catalogRows = [
 function startupCatalogResolvesOnlyInstrumentsPresentInCatalog(): void {
   const resolved = resolveStartupCatalog(catalogRows, {
     providerLabel: "coinbase",
+    providerUuid: "provider-id",
     instruments: [
       { label: "active", symbol: "ACTIVE-USD" },
       { label: "policyless", symbol: "POLICYLESS-USD" },
@@ -142,8 +144,8 @@ function startupCatalogResolvesOnlyInstrumentsPresentInCatalog(): void {
   try {
     resolveStartupCatalog([
       ...catalogRows,
-      { providerId: "other-provider", instrumentId: "other-id", providerSymbol: "ACTIVE-USD" },
-    ], { providerLabel: "coinbase", instruments: [{ label: "active", symbol: "ACTIVE-USD" }] });
+      { providerId: "provider-id", instrumentId: "other-id", providerSymbol: "ACTIVE-USD" },
+    ], { providerLabel: "coinbase", providerUuid: "provider-id", instruments: [{ label: "active", symbol: "ACTIVE-USD" }] });
   } catch (error) {
     refused = error instanceof Error && error.message === "Market-data persistence catalog failed.";
   }
@@ -164,7 +166,8 @@ async function startupWithNoMappingSkipsEverythingWithoutProvider(): Promise<voi
   const result = await recoverMarketDataStartup({} as KyselyDatabase, undefined, configuration, probe);
   assert(result.started.length === 0, "Nothing may start without a mapping.");
   assert(result.skipped.get("active") === "NO_POLICY", "Every instrument must be inspected for a reason.");
-  assert(seen.every((value) => value === undefined), "Without a mapping no provider filter is applied.");
+  assert(seen.length > 0, "Every unresolved instrument must be inspected.");
+  assert(seen.every((value) => value === "provider-id"), "The configured provider filter is always applied.");
   assert(result.skipped.get("broken") === "RECOVERY_ERROR", "An inspection failure is a recovery error.");
   assert(
     result.failures.get("broken")?.message === "Market-data startup recovery failed. SQLSTATE 57P01.",
@@ -198,10 +201,29 @@ async function startupCatalogLoadFailureIsSafe(): Promise<void> {
   console.log("startupCatalogLoadFailureIsSafe");
 }
 
+function startupCatalogSeparatesProvidersWithTheSameSymbol(): void {
+  const rows = [
+    { providerId: "p-one", instrumentId: "i-one", providerSymbol: "BTC-USD" },
+    { providerId: "p-two", instrumentId: "i-two", providerSymbol: "BTC-USD" },
+  ];
+  const wanted = [{ label: "btc", symbol: "BTC-USD" }];
+  const one = resolveStartupCatalog(rows, { providerLabel: "coinbase", providerUuid: "p-one", instruments: wanted });
+  assert(one.mapping?.providerUuid === "p-one", "Provider one must be selected.");
+  assert(one.mapping.instrumentsByLabel.get("btc") === "i-one", "Provider one must resolve to its own row.");
+  const two = resolveStartupCatalog(rows, { providerLabel: "coinbase", providerUuid: "p-two", instruments: wanted });
+  assert(two.mapping?.providerUuid === "p-two", "Provider two must be selected.");
+  assert(two.mapping.instrumentsByLabel.get("btc") === "i-two", "Provider two must resolve to its own row.");
+  const wrong = resolveStartupCatalog(rows, { providerLabel: "coinbase", providerUuid: "p-three", instruments: wanted });
+  assert(wrong.mapping === undefined, "An unknown provider resolves nothing.");
+  assert(wrong.unresolved.length === 1 && wrong.unresolved[0] === "btc", "The instrument is reported unresolved.");
+  console.log("startupCatalogSeparatesProvidersWithTheSameSymbol");
+}
+
 void startupSkipsAndSeedsIndependently()
   .then(startupNoRowIsFreshStart)
   .then(startupErrorTextIsSafe)
   .then(startupCatalogResolvesOnlyInstrumentsPresentInCatalog)
+  .then(startupCatalogSeparatesProvidersWithTheSameSymbol)
   .then(startupWithNoMappingSkipsEverythingWithoutProvider)
   .then(startupCatalogLoadFailureIsSafe)
   .catch((error: unknown) => {

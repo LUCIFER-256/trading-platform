@@ -39,9 +39,10 @@ interface Fixture {
   readonly ethInstrumentId: string;
 }
 
-function catalogConfiguration() {
+function catalogConfiguration(providerUuid: string) {
   return {
     providerLabel: "coinbase",
+    providerUuid,
     instruments: [
       { label: "btc", symbol: "BTC-USD" },
       { label: "eth", symbol: "ETH-USD" },
@@ -139,7 +140,7 @@ async function adapterAgreesWithPortSemantics(
   data: Fixture,
 ): Promise<void> {
   await withWriterRole(client, async () => {
-    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration());
+    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration(data.providerId));
     const request = observation("1");
     const first = await port.appendObservation(request);
     const duplicate = await port.appendObservation(request);
@@ -164,7 +165,7 @@ async function adapterHaltTransitionAndQualityReplay(
   data: Fixture,
 ): Promise<void> {
   await withWriterRole(client, async () => {
-    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration());
+    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration(data.providerId));
     await port.transitionState({
       providerId: "coinbase",
       instrumentId: "eth",
@@ -186,7 +187,7 @@ async function adapterHaltTransitionAndQualityReplay(
     };
     const replayPort = await PostgresPersistencePort.fromCatalog(
       client.database,
-      catalogConfiguration(),
+      catalogConfiguration(data.providerId),
       losingAcknowledgement,
     );
     const bucket = {
@@ -225,7 +226,7 @@ async function adapterHaltTransitionAndQualityReplay(
   );
   console.log("marketDataPersistencePortTransitionAndQualityReplay");
   await withWriterRole(client, async () => {
-    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration());
+    const port = await PostgresPersistencePort.fromCatalog(client.database, catalogConfiguration(data.providerId));
     await port.openHalt({
       providerId: "coinbase",
       instrumentId: "eth",
@@ -256,7 +257,7 @@ interface MappingCase {
   readonly policyEnabled: boolean;
 }
 
-async function insertCase(client: DatabaseClient, suffix: string, item: MappingCase): Promise<void> {
+async function insertCase(client: DatabaseClient, suffix: string, item: MappingCase): Promise<string> {
   const market = await sql<{ readonly id: string }>`insert into platform.markets(market_code, enabled)
     values (${`case-market-${item.name}-${suffix}`}, ${item.marketEnabled}) returning id`.execute(client.database);
   const provider = await sql<{ readonly id: string }>`insert into platform.providers(provider_code, enabled)
@@ -274,6 +275,7 @@ async function insertCase(client: DatabaseClient, suffix: string, item: MappingC
   await sql`insert into platform.market_data_policies(
     instrument_id, enabled, max_ingestion_age_ms, max_event_age_ms, max_future_skew_ms
   ) values (${instrument.rows[0]!.id}, ${item.policyEnabled}, 600000, 600000, 60000)`.execute(client.database);
+  return provider.rows[0]!.id;
 }
 
 async function catalogRefusals(client: DatabaseClient, suffix: string): Promise<void> {
@@ -286,7 +288,7 @@ async function catalogRefusals(client: DatabaseClient, suffix: string): Promise<
     symbolEnabled: true,
     policyEnabled: true,
   };
-  await insertCase(client, suffix, good);
+  const goodProvider = await insertCase(client, suffix, good);
   const refused: readonly MappingCase[] = [
     { ...good, name: "policy", symbol: "POLICY-OFF-USD", policyEnabled: false },
     { ...good, name: "symbol", symbol: "SYMBOL-OFF-USD", symbolEnabled: false },
@@ -294,23 +296,27 @@ async function catalogRefusals(client: DatabaseClient, suffix: string): Promise<
     { ...good, name: "provider", symbol: "PROVIDER-OFF-USD", providerEnabled: false },
     { ...good, name: "market", symbol: "MARKET-OFF-USD", marketEnabled: false },
   ];
+  const refusedProviders = new Map<string, string>();
   for (const item of refused) {
-    await insertCase(client, suffix, item);
+    refusedProviders.set(item.name, await insertCase(client, suffix, item));
   }
   await withWriterRole(client, async () => {
     const accepted = await PostgresPersistencePort.fromCatalog(client.database, {
       providerLabel: "coinbase",
+      providerUuid: goodProvider,
       instruments: [{ label: "good", symbol: "GOOD-USD" }],
     });
     assert(accepted instanceof PostgresPersistencePort, "the fully enabled control mapping must be accepted.");
     for (const item of refused) {
       await rejectsCatalog(client, {
         providerLabel: "coinbase",
+        providerUuid: refusedProviders.get(item.name)!,
         instruments: [{ label: "good", symbol: item.symbol }],
       });
     }
     await rejectsCatalog(client, {
       providerLabel: "coinbase",
+      providerUuid: goodProvider,
       instruments: [{ label: "good", symbol: "UNKNOWN-USD" }],
     });
   });

@@ -232,6 +232,51 @@ async function resetIsPerInstrument(): Promise<void> {
   console.log("resetIsPerInstrument");
 }
 
+async function resetForTheSecondInstrumentOnly(): Promise<void> {
+  const value = setup(
+    new Map([
+      ["btc", { price: recoveryPrice, eventTime: "0" }],
+      ["eth", { price: recoveryPrice, eventTime: "0" }],
+    ]),
+    reset("eth", 60_000),
+  );
+  await connect(value);
+  value.wire.frame(ticker("BTC-USD", "2.00"));
+  value.wire.frame(ticker("ETH-USD", "2.00"));
+  await turns();
+  assert(value.port.calls.includes("append:eth"), "A reset held only for eth must apply to eth.");
+  assert(
+    value.port.haltRequests.length === 1 && value.port.haltRequests[0]?.instrumentId === "btc",
+    "A reset held only for eth must not apply to btc.",
+  );
+  console.log("resetForTheSecondInstrumentOnly");
+}
+
+async function resetsForBothInstrumentsApplyIndependently(): Promise<void> {
+  const both = new Map([...reset("btc", 60_000), ...reset("eth", 60_000)]);
+  const value = setup(
+    new Map([
+      ["btc", { price: recoveryPrice, eventTime: "0" }],
+      ["eth", { price: recoveryPrice, eventTime: "0" }],
+    ]),
+    both,
+  );
+  await connect(value);
+  value.wire.frame(ticker("ETH-USD", "2.00"));
+  value.wire.frame(ticker("BTC-USD", "2.00"));
+  await turns();
+  const beforeSecondJump: number = value.port.haltRequests.length;
+  assert(beforeSecondJump === 0, "Both instruments hold a reset, so neither may halt.");
+  assert(value.port.calls.includes("append:btc") && value.port.calls.includes("append:eth"), "Both ticks must persist.");
+  value.wire.frame(ticker("BTC-USD", "9.00", 3));
+  await turns();
+  assert(
+    value.port.haltRequests.length === 1 && value.port.haltRequests[0]?.instrumentId === "btc",
+    "Each reset is consumed on its own: btc's second jump halts after its reset was used.",
+  );
+  console.log("resetsForBothInstrumentsApplyIndependently");
+}
+
 async function expiryBoundaryIsExclusive(): Promise<void> {
   const atNow = setup(seed("btc"));
   await connect(atNow);
@@ -322,6 +367,8 @@ void confirmedResetIsTheFirstReference()
   .then(expiredResetIsIgnored)
   .then(resetIsUsedOnce)
   .then(resetIsPerInstrument)
+  .then(resetForTheSecondInstrumentOnly)
+  .then(resetsForBothInstrumentsApplyIndependently)
   .then(expiryBoundaryIsExclusive)
   .then(rejectedTickDoesNotConsumeReset)
   .then(haltedTickKeepsResetForNothingElse)

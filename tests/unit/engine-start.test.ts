@@ -16,7 +16,11 @@ async function unitEngineStartRefusesBeforeAnyDatabaseOrLockUse(): Promise<void>
     const options: EngineOptions = {
       database: touching("database"),
       lockConnection: touching("lock"),
-      catalog: { providerLabel: "coinbase", instruments: [{ label: "btcusd", symbol: "BTC-USD" }] },
+      catalog: {
+        providerLabel: "coinbase",
+        providerUuid: "00000000-0000-7000-8000-000000000001",
+        instruments: [{ label: "btcusd", symbol: "BTC-USD" }],
+      },
       termsAcknowledgement: acknowledgement,
       endpoint: "wss://example.invalid",
       transport: touching("transport"),

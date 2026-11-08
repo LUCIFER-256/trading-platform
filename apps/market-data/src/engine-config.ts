@@ -8,7 +8,7 @@ export class EngineConfigurationError extends Error {
 
   public constructor(readonly code:
     "RUNTIME_MODE" | "LIVE_MODE" | "EXTRA_CA" | "WS_ENDPOINT" | "REST_BASE_URL" | "INSTRUMENTS" | "FLUSH_INTERVAL"
-    | "ALLOWED_HOSTS" | "HOST_NOT_ALLOWED") {
+    | "ALLOWED_HOSTS" | "HOST_NOT_ALLOWED" | "PROVIDER_ID") {
     super(`Market-data engine configuration is invalid: ${code}.`);
   }
 }
@@ -25,6 +25,7 @@ export interface EngineConfiguration {
 
 const LABEL = /^[a-z][a-z0-9]{0,15}$/;
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
+const PROVIDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SYMBOL = /^[A-Z0-9]{2,12}-[A-Z0-9]{2,12}$/;
 
 function requiredUrl(value: string | undefined, protocol: "wss:" | "https:", code: "WS_ENDPOINT" | "REST_BASE_URL"): string {
@@ -85,6 +86,10 @@ export function parseEngineEnvironment(environment: EngineEnvironment): EngineCo
   if (extraCaFile !== undefined && (mode.value !== "test" || extraCaFile.length === 0)) {
     throw new EngineConfigurationError("EXTRA_CA");
   }
+  const providerUuid = environment.MARKET_DATA_PROVIDER_ID;
+  if (providerUuid === undefined || !PROVIDER_ID.test(providerUuid)) {
+    throw new EngineConfigurationError("PROVIDER_ID");
+  }
   const hosts = allowedHosts(environment.MARKET_DATA_ALLOWED_HOSTS);
   const endpoint = requiredUrl(environment.MARKET_DATA_WS_ENDPOINT, "wss:", "WS_ENDPOINT");
   const restBaseUrl = requiredUrl(environment.MARKET_DATA_REST_BASE_URL, "https:", "REST_BASE_URL");
@@ -95,7 +100,7 @@ export function parseEngineEnvironment(environment: EngineEnvironment): EngineCo
     runtimeMode: mode.value,
     endpoint,
     restBaseUrl,
-    catalog: { providerLabel: "coinbase", instruments: instruments(environment.MARKET_DATA_INSTRUMENTS) },
+    catalog: { providerLabel: "coinbase", providerUuid, instruments: instruments(environment.MARKET_DATA_INSTRUMENTS) },
     termsAcknowledgement: environment.MARKET_DATA_TERMS_ACKNOWLEDGEMENT,
     qualityFlushIntervalMs,
     extraCaFile,

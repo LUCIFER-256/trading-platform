@@ -39,6 +39,7 @@ export class PostgresPersistenceError extends Error {
 
 export interface CatalogConfiguration {
   readonly providerLabel: string;
+  readonly providerUuid: string;
   readonly instruments: readonly { readonly label: string; readonly symbol: string }[];
 }
 export interface CatalogRow {
@@ -76,7 +77,7 @@ export function buildCatalogMapping(
   rows: readonly CatalogRow[],
   configuration: CatalogConfiguration,
 ): CatalogMapping {
-  if (configuration.providerLabel.length === 0 || configuration.instruments.length === 0) {
+  if (configuration.providerLabel.length === 0 || configuration.providerUuid.length === 0 || configuration.instruments.length === 0) {
     throw new PostgresPersistenceError("catalog");
   }
   const labels = new Map<string, string>();
@@ -86,7 +87,9 @@ export function buildCatalogMapping(
     if (target.label.length === 0 || target.symbol.length === 0 || labels.has(target.label)) {
       throw new PostgresPersistenceError("catalog");
     }
-    const matches = rows.filter((row) => row.providerSymbol === target.symbol);
+    const matches = rows.filter(
+      (row) => row.providerId === configuration.providerUuid && row.providerSymbol === target.symbol,
+    );
     if (matches.length !== 1) throw new PostgresPersistenceError("catalog");
     const match = matches[0]!;
     if (providerUuid !== undefined && providerUuid !== match.providerId) {

@@ -117,7 +117,7 @@ export function resolveStartupCatalog(
   configuration: CatalogConfiguration,
 ): StartupCatalog {
   const resolvable = configuration.instruments.filter(
-    (configured) => rows.some((row) => row.providerSymbol === configured.symbol),
+    (configured) => rows.some((row) => row.providerId === configuration.providerUuid && row.providerSymbol === configured.symbol),
   );
   const unresolved = configuration.instruments
     .filter((configured) => !resolvable.includes(configured))
@@ -163,7 +163,7 @@ export async function recoverMarketDataStartup(
   for (const configured of configuration.instruments) {
     const instrumentId = mapping?.instrumentsByLabel.get(configured.label);
     if (instrumentId === undefined) {
-      const scope = await inspectScope(calls, database, mapping?.providerUuid, configured.symbol);
+      const scope = await inspectScope(calls, database, configuration.providerUuid, configured.symbol);
       skipped.set(configured.label, scope.reason);
       if (scope.failure !== undefined) failures.set(configured.label, scope.failure);
       continue;

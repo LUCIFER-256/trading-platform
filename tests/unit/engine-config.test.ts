@@ -8,6 +8,7 @@ const base = {
   MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid/feed",
   MARKET_DATA_REST_BASE_URL: "https://api.example.invalid",
   MARKET_DATA_INSTRUMENTS: "btcusd=BTC-USD,ethusd=ETH-USD",
+  MARKET_DATA_PROVIDER_ID: "00000000-0000-7000-8000-000000000001",
   MARKET_DATA_TERMS_ACKNOWLEDGEMENT: "RA1_RISK_ACCEPTED",
   MARKET_DATA_ALLOWED_HOSTS: "ws.example.invalid,api.example.invalid",
 };
@@ -37,6 +38,16 @@ function unitEngineConfigurationParsesAndRefuses(): void {
   refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://user:pw@host.example.invalid" }, "WS_ENDPOINT");
   refuses({ ...base, MARKET_DATA_REST_BASE_URL: "http://api.example.invalid" }, "REST_BASE_URL");
   refuses({ ...base, MARKET_DATA_REST_BASE_URL: undefined }, "REST_BASE_URL");
+  assert(parsed.catalog.providerUuid === "00000000-0000-7000-8000-000000000001", "The provider id must pass through.");
+  const upper = "0000000A-0000-7000-8000-00000000000B";
+  const lower = parseEngineEnvironment({ ...base, MARKET_DATA_PROVIDER_ID: upper.toLowerCase() });
+  assert(lower.catalog.providerUuid === upper.toLowerCase(), "A lowercase hexadecimal id is accepted.");
+  const good = "00000000-0000-7000-8000-000000000001";
+  const badIds = [undefined, "", "test-provider", upper, `${good}\n`, ` ${good}`, good.slice(0, -1), `${good}0`];
+  badIds.push(good.replaceAll("-", ""), `${good.slice(0, -1)}g`);
+  for (const bad of badIds) {
+    refuses({ ...base, MARKET_DATA_PROVIDER_ID: bad }, "PROVIDER_ID");
+  }
   refuses({ ...base, MARKET_DATA_INSTRUMENTS: undefined }, "INSTRUMENTS");
   refuses({ ...base, MARKET_DATA_INSTRUMENTS: "" }, "INSTRUMENTS");
   refuses({ ...base, MARKET_DATA_INSTRUMENTS: "btcusd=btc-usd" }, "INSTRUMENTS");
@@ -79,12 +90,17 @@ function unitEngineConfigurationParsesAndRefuses(): void {
     "wss://ws.example.invalid\\@evil.invalid/feed",
     "wss://ws.example.invalid\u0000/feed",
     "wss://w\u00e9s.example.invalid/feed",
+    "wss://ws.example.invalid/\u007ffeed",
   ]) {
     refuses({ ...base, MARKET_DATA_WS_ENDPOINT: unsafe }, "WS_ENDPOINT");
   }
   refuses({ ...base, MARKET_DATA_REST_BASE_URL: "https://api.example.invalid\t" }, "REST_BASE_URL");
   refuses({ ...base, MARKET_DATA_REST_BASE_URL: "https://api.example.invalid\\@evil.invalid" }, "REST_BASE_URL");
   refuses({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws%2eexample.invalid.evil.invalid/feed" }, "HOST_NOT_ALLOWED");
+  const tilde = parseEngineEnvironment({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid/feed~v1" });
+  assert(tilde.endpoint === "wss://ws.example.invalid/feed~v1", "The last printable ASCII character must be accepted.");
+  const bang = parseEngineEnvironment({ ...base, MARKET_DATA_REST_BASE_URL: "https://api.example.invalid/!v1" });
+  assert(bang.restBaseUrl === "https://api.example.invalid/!v1", "The first printable ASCII character must be accepted.");
   const ported = parseEngineEnvironment({ ...base, MARKET_DATA_WS_ENDPOINT: "wss://ws.example.invalid:8443/feed" });
   assert(ported.endpoint === "wss://ws.example.invalid:8443/feed", "The allowlist restricts hosts, not ports.");
   const spare = "ws.example.invalid,api.example.invalid,spare.example.invalid";

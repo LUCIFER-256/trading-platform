@@ -105,7 +105,7 @@ async function fixture(
     ids.set(spec.label, inserted.instrumentId);
     instruments.push({ label: spec.label, symbol: inserted.symbol });
   }
-  return { providerId, ids, configuration: { providerLabel: "coinbase", instruments } };
+  return { providerId, ids, configuration: { providerLabel: "coinbase", providerUuid: providerId, instruments } };
 }
 
 async function withWriterRole<T>(client: DatabaseClient, action: () => Promise<T>): Promise<T> {
@@ -240,6 +240,7 @@ async function disabledScopeInstrumentsAreSkipped(client: DatabaseClient, suffix
   const disabledProvider = await fixture(client, `${suffix}p`, [{ label: "provider" }], { providerEnabled: false });
   const configuration: CatalogConfiguration = {
     providerLabel: "coinbase",
+    providerUuid: data.providerId,
     instruments: [
       ...data.configuration.instruments,
       ...disabledProvider.configuration.instruments,
@@ -300,6 +301,57 @@ async function startupCatalogAgreesWithPersistenceCatalog(client: DatabaseClient
     where instrument_id = ${data.ids.get("beta")!}`.execute(client.database);
   assert(row.rows.length === 1, "The halt must be stored under the catalog's beta instrument.");
   console.log("startupCatalogAgreesWithPersistenceCatalog");
+}
+
+async function twoProvidersWithTheSameSymbolResolveSeparately(client: DatabaseClient, suffix: string): Promise<void> {
+  const first = await fixture(client, suffix, [{ label: "shared" }]);
+  const symbol = first.configuration.instruments[0]!.symbol;
+  const secondMarket = await insertMarket(client, `startup-second-market-${suffix}`, true);
+  const secondProvider = await insertProvider(client, `startup-second-provider-${suffix}`, true);
+  const secondInstrument = await sql<{ readonly id: string }>`insert into platform.instruments(
+    market_id, instrument_code, enabled, price_increment, size_increment
+  ) values (${secondMarket}, ${`startup-second-${suffix}`}, true, '0.01', '0.00000001') returning id`.execute(client.database);
+  const secondInstrumentId = secondInstrument.rows[0]!.id;
+  await sql`insert into platform.provider_instrument_symbols(provider_id, instrument_id, provider_symbol, enabled)
+    values (${secondProvider}, ${secondInstrumentId}, ${symbol}, true)`.execute(client.database);
+  await sql`insert into platform.market_data_policies(
+    instrument_id, enabled, max_ingestion_age_ms, max_event_age_ms, max_future_skew_ms, jump_reset_ttl_ms
+  ) values (${secondInstrumentId}, true, 600000, 600000, 60000, 300000)`.execute(client.database);
+  const second: Fixture = {
+    providerId: secondProvider,
+    ids: new Map([["shared", secondInstrumentId]]),
+    configuration: { providerLabel: "coinbase", providerUuid: secondProvider, instruments: first.configuration.instruments },
+  };
+  for (const data of [first, second]) {
+    const catalog = await withWriterRole(client, () => loadStartupCatalog(client.database, data.configuration));
+    assert(catalog.mapping?.providerUuid === data.providerId, "Each provider id must resolve to its own provider.");
+    assert(
+      catalog.mapping.instrumentsByLabel.get("shared") === data.ids.get("shared"),
+      "Each provider must resolve the shared symbol to its own instrument.",
+    );
+    assert((await portFor(client, data)) instanceof PostgresPersistencePort, "The persistence catalog must resolve each provider.");
+  }
+  const wrong: Fixture = {
+    ...first,
+    configuration: { ...first.configuration, providerUuid: "00000000-0000-7000-8000-0000000000ff" },
+  };
+  const none = await withWriterRole(client, () => loadStartupCatalog(client.database, wrong.configuration));
+  assert(none.mapping === undefined && none.unresolved.length === 1, "A provider with no mapping resolves nothing.");
+  const inspected = await withWriterRole(client, () =>
+    recoverMarketDataStartup(client.database, none.mapping, wrong.configuration),
+  );
+  assert(
+    inspected.skipped.get("shared") === "DISABLED_SCOPE",
+    "Scope inspection must stay inside the configured provider, not see another provider's active row.",
+  );
+  let refused = false;
+  try {
+    await portFor(client, wrong);
+  } catch {
+    refused = true;
+  }
+  assert(refused, "The persistence catalog must refuse a provider with no mapping.");
+  console.log("twoProvidersWithTheSameSymbolResolveSeparately");
 }
 
 async function startupSeedComesFromRealAcceptedObservation(client: DatabaseClient, suffix: string): Promise<void> {
@@ -420,6 +472,7 @@ async function main(): Promise<void> {
     await startupSeedComesFromRealAcceptedObservation(client, `${suffix}g`);
     await jumpResetSurvivesRestart(client, `${suffix}h`);
     await expiredJumpResetIsNotLoaded(client, `${suffix}i`);
+    await twoProvidersWithTheSameSymbolResolveSeparately(client, `${suffix}j`);
   } finally {
     await sql`drop schema if exists platform cascade`.execute(client.database);
     await client.close();

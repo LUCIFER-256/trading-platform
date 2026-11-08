@@ -83,9 +83,11 @@ export class HttpsProductFetcher implements ProductFetcher {
           response.on("error", () => reject(new ProductFetchError("NETWORK")));
         },
       );
-      request.setTimeout(this.options.timeoutMs ?? REST_TIMEOUT_MS, () => {
-        request.destroy(new ProductFetchError("TIMEOUT"));
-      });
+      const deadline = setTimeout(() => {
+        reject(new ProductFetchError("TIMEOUT"));
+        request.destroy();
+      }, this.options.timeoutMs ?? REST_TIMEOUT_MS);
+      request.on("close", () => clearTimeout(deadline));
       request.on("error", (error: Error) => {
         reject(error instanceof ProductFetchError ? error : new ProductFetchError("NETWORK"));
       });

@@ -1,6 +1,6 @@
 import * as https from "node:https";
 import type { AddressInfo } from "node:net";
-import { HttpsProductFetcher, ProductFetchError } from "../../apps/market-data/src/coinbase/rest-fetcher";
+import { HttpsProductFetcher, ProductFetchError, REST_TIMEOUT_MS } from "../../apps/market-data/src/coinbase/rest-fetcher";
 import { assert, createTestPki, product } from "./support/market-data-wire-helpers";
 
 type Handler = (url: string, response: import("node:http").ServerResponse) => void;
@@ -78,6 +78,53 @@ async function unitHttpsProductFetcher(): Promise<void> {
       const slow = new HttpsProductFetcher({ baseUrl: `https://127.0.0.1:${port}`, ca: pki.caPem, timeoutMs: 150 });
       await failsWith(slow.getProduct("BTC-USD"), "TIMEOUT", "An unanswered request must time out");
     });
+    let dripClosed = false;
+    await withServer(
+      pki,
+      (_url, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        const drip = setInterval(() => response.write(" "), 40);
+        response.on("close", () => {
+          dripClosed = true;
+          clearInterval(drip);
+        });
+      },
+      async (port) => {
+        const dripped = new HttpsProductFetcher({ baseUrl: `https://127.0.0.1:${port}`, ca: pki.caPem, timeoutMs: 300 });
+        const started = Date.now();
+        const guard = new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("A slow-drip response was not cut off by the deadline.")), 3_000).unref();
+        });
+        await failsWith(
+          Promise.race([dripped.getProduct("BTC-USD"), guard]),
+          "TIMEOUT",
+          "A slow-drip response must hit the overall deadline",
+        );
+        const elapsed = Date.now() - started;
+        assert(elapsed >= 250 && elapsed < 1500, `The deadline must bound the whole request (took ${elapsed} ms).`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert(dripClosed, "The deadline must close the connection, not only settle the promise.");
+      },
+    );
+    await withServer(
+      pki,
+      (_url, response) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        const drip = setInterval(() => response.write(" "), 40);
+        response.on("close", () => clearInterval(drip));
+        setTimeout(() => response.end("{}"), 150);
+      },
+      async (port) => {
+        const quick = new HttpsProductFetcher({ baseUrl: `https://127.0.0.1:${port}`, ca: pki.caPem, timeoutMs: 600_000 });
+        const timersBefore = process.getActiveResourcesInfo().filter((kind) => kind === "Timeout").length;
+        const result = await quick.getProduct("BTC-USD");
+        assert(result.status === 200, "A response inside the deadline must succeed.");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const timersAfter = process.getActiveResourcesInfo().filter((kind) => kind === "Timeout").length;
+        assert(timersAfter <= timersBefore, "A finished request must not leave its deadline timer running.");
+      },
+    );
+    assert(REST_TIMEOUT_MS === 5_000, "The REST deadline constant is pinned at 5,000 ms.");
     for (const bad of ["http://example.invalid", "not a url", "https://u:p@example.invalid", "https://example.invalid/?q=1"]) {
       let refused = false;
       try {

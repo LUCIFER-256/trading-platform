@@ -15,6 +15,7 @@ function assert(value: unknown, message: string): asserts value {
 
 const configuration: CatalogConfiguration = {
   providerLabel: "coinbase",
+  providerUuid: "00000000-0000-7000-8000-000000000001",
   instruments: [
     { label: "btc", symbol: "BTC-USD" },
     { label: "eth", symbol: "ETH-USD" },
@@ -122,6 +123,24 @@ async function mappingsAndOutcomes(): Promise<void> {
     "Nullable calls must preserve null.",
   );
   console.log("postgresPersistenceMapsCatalogAndPreservesOutcomes");
+}
+
+async function catalogMatchesProviderAndSymbol(): Promise<void> {
+  const otherProvider = "00000000-0000-7000-8000-000000000050";
+  const otherRows: CatalogRow[] = [
+    { providerId: otherProvider, instrumentId: "00000000-0000-7000-8000-000000000051", providerSymbol: "BTC-USD" },
+    { providerId: otherProvider, instrumentId: "00000000-0000-7000-8000-000000000052", providerSymbol: "ETH-USD" },
+  ];
+  const both = [...rows, ...otherRows];
+  const mine = buildCatalogMapping(both, configuration);
+  assert(mine.providerUuid === rows[0]!.providerId, "The configured provider must be selected.");
+  assert(mine.instrumentsByLabel.get("btc") === rows[0]!.instrumentId, "The configured provider's instrument must be used.");
+  const theirs = buildCatalogMapping(both, { ...configuration, providerUuid: otherProvider });
+  assert(theirs.providerUuid === otherProvider, "Another provider id must select the other provider.");
+  assert(theirs.instrumentsByLabel.get("eth") === otherRows[1]!.instrumentId, "The other provider's instrument must be used.");
+  rejects(() => buildCatalogMapping(both, { ...configuration, providerUuid: "00000000-0000-7000-8000-0000000000ff" }));
+  rejects(() => buildCatalogMapping(rows, { ...configuration, providerUuid: "" }));
+  console.log("catalogMatchesProviderAndSymbol");
 }
 
 async function catalogMappingRefusals(): Promise<void> {
@@ -287,6 +306,7 @@ async function refusesUnknownHaltReason(): Promise<void> {
 
 void mappingsAndOutcomes()
   .then(catalogMappingRefusals)
+  .then(catalogMatchesProviderAndSymbol)
   .then(safeRefusalsAndNoRetry)
   .then(refusesUnknownHaltReason)
   .then(adapterAddsNoTimer)
