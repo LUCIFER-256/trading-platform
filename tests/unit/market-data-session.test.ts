@@ -11,6 +11,7 @@ import {
   CircuitEventRelay,
   CoinbaseSession,
   type CircuitRelayEvent,
+  type HeartbeatSummaryRecord,
 } from "../../apps/market-data/src/coinbase/session";
 import {
   CoinbaseWsTransport,
@@ -127,6 +128,7 @@ function setup(
   status = 200,
   endpoint = "wss://synthetic.example",
   instrumentCount = 1,
+  sink?: (record: HeartbeatSummaryRecord) => void,
 ): {
   clock: FakeClock;
   scheduler: FakeScheduler;
@@ -134,6 +136,7 @@ function setup(
   wire: FakeWire;
   session: CoinbaseSession;
   logs: unknown[];
+  summaries: HeartbeatSummaryRecord[];
   ordered: string[];
   rest: ProductFetcher;
   events: CircuitRelayEvent[];
@@ -146,6 +149,7 @@ function setup(
   const ordered: string[] = [];
   const wire = new FakeWire(ordered);
   const logs: unknown[] = [];
+  const summaries: HeartbeatSummaryRecord[] = [];
   const events: CircuitRelayEvent[] = [];
   const relay = new CircuitEventRelay((event) => events.push(event));
   const circuit = new ProviderCircuit(
@@ -201,6 +205,10 @@ function setup(
     prng: new SeededPrng(7),
     correlationId: () => "correlation",
     log: (entry) => logs.push(entry),
+    heartbeatLog: (record) => {
+      summaries.push(record);
+      sink?.(record);
+    },
   });
   return {
     clock,
@@ -209,6 +217,7 @@ function setup(
     wire,
     session,
     logs,
+    summaries,
     ordered,
     rest: fetcher,
     events,
@@ -717,6 +726,130 @@ function heartbeat(
     time: "1970-01-01T00:00:00.000000Z",
   };
 }
+async function beat(
+  value: ReturnType<typeof setup>,
+  symbol: string,
+  at: number,
+): Promise<void> {
+  value.clock.now = at;
+  value.wire.frame(heartbeat(symbol, at, 0));
+  await turns();
+}
+async function sessionHeartbeatSummaryNotEmittedBefore60s(): Promise<void> {
+  const value = setup();
+  await value.session.connect();
+  for (let at = 0; at <= 59999; at += 1000) await beat(value, "BTC-USD", at);
+  await beat(value, "BTC-USD", 59999);
+  assert(value.summaries.length === 0, "No summary is emitted before 60,000 ms.");
+  passed("sessionHeartbeatSummaryNotEmittedBefore60s");
+}
+async function sessionHeartbeatSummaryReportsMaxIntervalAt60s(): Promise<void> {
+  const value = setup();
+  await value.session.connect();
+  for (const at of [0, 1000, 2000, 5000, 6000, 30000, 31000, 60000]) {
+    await beat(value, "BTC-USD", at);
+  }
+  assert(value.summaries.length === 1, "Exactly one summary at 60,000 ms.");
+  const record = value.summaries[0];
+  assert(
+    JSON.stringify(record) ===
+      JSON.stringify({
+        providerId: "coinbase",
+        instrumentId: "btc",
+        intervals: 7,
+        maxIntervalMs: 29000,
+        windowMs: 60000,
+        timestampMs: 60000,
+        correlationId: "correlation",
+      }),
+    "Summary carries exact interval count, maximum, window and ids only.",
+  );
+  passed("sessionHeartbeatSummaryReportsMaxIntervalAt60s");
+}
+async function sessionHeartbeatSummaryWindowResetsAfterEmit(): Promise<void> {
+  const value = setup();
+  await value.session.connect();
+  for (const at of [0, 60000, 61000, 62000, 120000]) {
+    await beat(value, "BTC-USD", at);
+  }
+  assert(value.summaries.length === 2, "A second window emits its own summary.");
+  const second = value.summaries[1];
+  assert(
+    second?.intervals === 3 && second.maxIntervalMs === 58000 &&
+      second.windowMs === 60000,
+    "The second window excludes the first window's counts and maximum.",
+  );
+  passed("sessionHeartbeatSummaryWindowResetsAfterEmit");
+}
+async function sessionHeartbeatSummaryReportsActualWindowLength(): Promise<void> {
+  const value = setup();
+  await value.session.connect();
+  await beat(value, "BTC-USD", 1000);
+  await beat(value, "BTC-USD", 62500);
+  const record = value.summaries[0];
+  assert(
+    record?.windowMs === 61500 && record.timestampMs === 62500,
+    "Window length is the measured elapsed time, not the nominal 60,000 ms.",
+  );
+  passed("sessionHeartbeatSummaryReportsActualWindowLength");
+}
+async function sessionHeartbeatLogFailureDoesNotAffectSession(): Promise<void> {
+  const value = setup(200, "wss://synthetic.example", 1, () => {
+    throw new Error("log sink failed");
+  });
+  await value.session.connect();
+  for (const at of [0, 60000, 61000]) {
+    value.clock.now = at;
+    value.wire.frame(heartbeat("BTC-USD", at, 0));
+    await turns();
+  }
+  assert(
+    value.wire.calls.filter((call) => call === "close").length === 0 &&
+      value.logs.length === 0 &&
+      value.summaries.length === 1,
+    "A throwing heartbeat log sink neither closes the transport nor records a failure.",
+  );
+  passed("sessionHeartbeatLogFailureDoesNotAffectSession");
+}
+async function sessionHeartbeatSummaryIsPerInstrument(): Promise<void> {
+  const value = setup(200, "wss://synthetic.example", 2);
+  const connecting = value.session.connect();
+  await turns();
+  value.scheduler.advanceTo(100);
+  await connecting;
+  await beat(value, "BTC-USD", 0);
+  await beat(value, "ETH-USD", 10);
+  await beat(value, "BTC-USD", 60000);
+  assert(
+    value.summaries.length === 1 && value.summaries[0]?.instrumentId === "btc",
+    "Only the instrument whose window elapsed emits a summary.",
+  );
+  await beat(value, "ETH-USD", 60010);
+  const all: readonly HeartbeatSummaryRecord[] = value.summaries;
+  assert(
+    all.length === 2 &&
+      all[1]?.instrumentId === "eth" &&
+      all[1].intervals === 1,
+    "Each instrument keeps its own window.",
+  );
+  passed("sessionHeartbeatSummaryIsPerInstrument");
+}
+async function sessionHeartbeatSummaryResetsOnReconnect(): Promise<void> {
+  const value = setup();
+  await value.session.connect();
+  await beat(value, "BTC-USD", 0);
+  await beat(value, "BTC-USD", 30000);
+  value.wire.closed();
+  value.scheduler.advanceTo(30600);
+  await turns(8);
+  await beat(value, "BTC-USD", 65000);
+  await beat(value, "BTC-USD", 66000);
+  assert(
+    value.summaries.length === 0,
+    "A reconnect discards the old window instead of reporting a false gap.",
+  );
+  passed("sessionHeartbeatSummaryResetsOnReconnect");
+}
 async function sessionAheadConfirmedClosesAndReconnects(): Promise<void> {
   const value = setup();
   await value.session.connect();
@@ -977,6 +1110,13 @@ void (async () => {
   await sessionPriceJumpQuarantinesCandidate();
   await sessionLockedQuoteHalts();
   await sessionHeartbeatGapForcesReconnectAt5000ms();
+  await sessionHeartbeatSummaryNotEmittedBefore60s();
+  await sessionHeartbeatSummaryReportsMaxIntervalAt60s();
+  await sessionHeartbeatSummaryWindowResetsAfterEmit();
+  await sessionHeartbeatSummaryReportsActualWindowLength();
+  await sessionHeartbeatLogFailureDoesNotAffectSession();
+  await sessionHeartbeatSummaryIsPerInstrument();
+  await sessionHeartbeatSummaryResetsOnReconnect();
   await sessionQueueOverflowClosesAndReconnectsThenResets();
   await sessionProductAssertionFailureHaltsInstrumentOnly();
   await sessionRepeatedFailuresOpenCircuitAndHalfOpenAllowsOneAttempt();

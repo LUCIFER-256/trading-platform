@@ -1,4 +1,4 @@
-import { MarketDataEngine, type EngineOptions } from "../../apps/market-data/src/engine";
+import { heartbeatLogEntry, MarketDataEngine, type EngineOptions } from "../../apps/market-data/src/engine";
 import { TermsGateError } from "../../apps/market-data/src/terms-gate";
 import { assert } from "./support/market-data-wire-helpers";
 
@@ -43,6 +43,33 @@ async function unitEngineStartRefusesBeforeAnyDatabaseOrLockUse(): Promise<void>
   console.log("unitEngineStartRefusesBeforeAnyDatabaseOrLockUse");
 }
 
+function unitHeartbeatLogEntryCarriesOnlySafeFields(): void {
+  const entry = heartbeatLogEntry({
+    providerId: "provider",
+    instrumentId: "btc",
+    intervals: 59,
+    maxIntervalMs: 1234,
+    windowMs: 60100,
+    timestampMs: 99,
+    correlationId: "c1",
+  });
+  assert(
+    JSON.stringify(entry) ===
+      JSON.stringify({
+        event: "heartbeat",
+        fields: {
+          instrumentId: "btc",
+          intervals: 59,
+          maxIntervalMs: 1234,
+          windowMs: 60100,
+          correlationId: "c1",
+        },
+      }),
+    "Heartbeat log entry must carry exactly the event name and five safe fields.",
+  );
+  console.log("unitHeartbeatLogEntryCarriesOnlySafeFields");
+}
+
 let finished = false;
 
 process.on("exit", () => {
@@ -53,6 +80,7 @@ process.on("exit", () => {
 });
 
 unitEngineStartRefusesBeforeAnyDatabaseOrLockUse().then(() => {
+  unitHeartbeatLogEntryCarriesOnlySafeFields();
   finished = true;
 }).catch((error) => {
   console.error(error);

@@ -7,7 +7,12 @@ import {
   type AdvisoryLockConnectionFactory,
 } from "./advisory-lock";
 import { ProviderCircuit } from "./circuit";
-import { CircuitEventRelay, CoinbaseSession, type SessionInstrument } from "./coinbase/session";
+import {
+  CircuitEventRelay,
+  CoinbaseSession,
+  type HeartbeatSummaryRecord,
+  type SessionInstrument,
+} from "./coinbase/session";
 import { CoinbaseProductAssertions, type ProductFetcher } from "./coinbase/rest-products";
 import type { WireTransport } from "./coinbase/ws-client";
 import { EngineStoppedError, GuardedPersistence, StoppableTransport, TrackingScheduler } from "./engine-guards";
@@ -49,6 +54,19 @@ export interface EngineOptions {
   readonly abort: () => void;
   readonly log: (record: EngineLogRecord) => void;
   readonly qualityFlushIntervalMs?: number;
+}
+
+export function heartbeatLogEntry(record: HeartbeatSummaryRecord): EngineLogRecord {
+  return {
+    event: "heartbeat",
+    fields: {
+      instrumentId: record.instrumentId,
+      intervals: record.intervals,
+      maxIntervalMs: record.maxIntervalMs,
+      windowMs: record.windowMs,
+      correlationId: record.correlationId,
+    },
+  };
 }
 
 export class EngineStartError extends Error {
@@ -179,6 +197,7 @@ export class MarketDataEngine {
           correlationId: record.correlationId,
         },
       }),
+      heartbeatLog: (record) => options.log(heartbeatLogEntry(record)),
     });
     const engine = new MarketDataEngine(options, lock, tracking, transport, persistence, quality, summary);
     engine.scheduleFlush();

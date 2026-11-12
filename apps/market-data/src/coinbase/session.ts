@@ -46,6 +46,22 @@ export interface SafeSessionRecord {
   readonly queueDepth: number;
   readonly correlationId: string;
 }
+export interface HeartbeatSummaryRecord {
+  readonly providerId: string;
+  readonly instrumentId: string;
+  readonly intervals: number;
+  readonly maxIntervalMs: number;
+  readonly windowMs: number;
+  readonly timestampMs: number;
+  readonly correlationId: string;
+}
+export const HEARTBEAT_SUMMARY_MS = 60_000;
+interface HeartbeatWindow {
+  lastMs: number;
+  startMs: number;
+  intervals: number;
+  maxIntervalMs: number;
+}
 export interface CircuitRelayHandlers {
   reconnect(): void;
   recovery(reason: RecoveryReason, discardedCount?: number): void;
@@ -119,6 +135,7 @@ export interface SessionOptions {
   readonly prng: Prng;
   readonly correlationId: () => string;
   readonly log?: (record: SafeSessionRecord) => void;
+  readonly heartbeatLog?: (record: HeartbeatSummaryRecord) => void;
 }
 export class CoinbaseSession {
   private active: SessionInstrument[] = [];
@@ -140,6 +157,7 @@ export class CoinbaseSession {
   private reconnectTimer: TimerToken | undefined;
   private blockedTimer: TimerToken | undefined;
   private connection = 0;
+  private readonly heartbeats = new Map<string, HeartbeatWindow>();
   private terminal = true;
   private persistenceEpisode = false;
   private readonly queue: PersistenceQueue<
@@ -227,6 +245,7 @@ export class CoinbaseSession {
     );
     this.value.circuit.productAssertionsPassed();
     const connection = ++this.connection;
+    this.heartbeats.clear();
     this.terminal = false;
     try {
       this.value.transport.open(this.value.endpoint, {
@@ -330,6 +349,7 @@ export class CoinbaseSession {
       return;
     }
     if (parsed.value.kind === "heartbeat") {
+      this.observeHeartbeat(item.instrumentId);
       const prior = this.matches.get(item.instrumentId);
       const result = this.value.circuit.heartbeat(
         item.instrumentId,
@@ -506,6 +526,32 @@ export class CoinbaseSession {
       this.blockedTimer = undefined;
       void this.connect();
     });
+  }
+  private observeHeartbeat(instrumentId: string): void {
+    const now = this.value.clock.nowMs();
+    const window = this.heartbeats.get(instrumentId);
+    if (window === undefined) {
+      this.heartbeats.set(instrumentId, { lastMs: now, startMs: now, intervals: 0, maxIntervalMs: 0 });
+      return;
+    }
+    window.intervals += 1;
+    window.maxIntervalMs = Math.max(window.maxIntervalMs, now - window.lastMs);
+    window.lastMs = now;
+    if (now - window.startMs < HEARTBEAT_SUMMARY_MS) return;
+    try {
+      this.value.heartbeatLog?.({
+        providerId: this.value.providerId,
+        instrumentId,
+        intervals: window.intervals,
+        maxIntervalMs: window.maxIntervalMs,
+        windowMs: now - window.startMs,
+        timestampMs: now,
+        correlationId: this.value.correlationId(),
+      });
+    } catch {}
+    window.startMs = now;
+    window.intervals = 0;
+    window.maxIntervalMs = 0;
   }
   private record(instrumentId: string | null, reason: string): void {
     this.value.log?.({
