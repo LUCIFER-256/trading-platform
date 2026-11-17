@@ -1,4 +1,4 @@
-# Market-data observation run (Sprint 5.4): procedure
+# Market-data observation run (Sprint 5.4): procedure (revision 4)
 
 Status: DRAFT for the user's approval. Nothing in this document connects anywhere by itself. Do not start the run until the user has approved this runbook in writing in the ledger.
 
@@ -36,19 +36,20 @@ Before the run, the owner confirms the provider behind the id, because the engin
 `select provider_code, enabled from platform.providers where id = '<MARKET_DATA_PROVIDER_ID>'`.
 Sandbox and the authenticated Direct feed are not approved.
 
-## Host checklist (Ubuntu)
+## Host checklist (Kali Linux)
 
 Check each item before starting. Stop and tell the auditor if one fails.
 
 1. The laptop is on mains power. Automatic suspend is off in the power settings.
 2. `timedatectl` shows "System clock synchronized: yes".
-3. `systemctl is-enabled postgresql` prints `enabled`, and the database is running.
+3. PostgreSQL 18 is running: `pg_lsclusters` shows `18 main 5432 online`. Kali does not start it by itself. Start it with `sudo systemctl start postgresql@18-main`, and make it start at boot with `sudo systemctl enable postgresql`.
 4. `df -h` shows at least 10 GB free on the disk that holds the database and your home folder.
-5. Automatic updates are paused for the window: `sudo systemctl stop unattended-upgrades`. Start it again afterwards. Do not reboot or install updates during the run.
+5. No updates during the window. Kali is a rolling release: do not run `apt update`, `apt upgrade` or `apt full-upgrade`, and do not reboot, until the run ends.
 6. You stay logged in to your desktop session for the whole run.
 7. Only one engine runs. A second engine exits with code 3.
 8. In the BIOS, "restore on AC power loss" is set to power on.
-9. Outbound HTTPS to the two hosts works. If the network inspects TLS, the engine refuses the unknown certificate and stops with a failure. That is a safe failure, not a fault.
+9. The engine runs under Node 22.23.2, the version pinned in `.nvmrc`. Kali's own Node is newer (24) and the project's architecture tool fails on it. The shell that starts the engine must load nvm and print `v22.23.2` for `node --version` (see the start command).
+10. Outbound HTTPS to the two hosts works. If the network inspects TLS, the engine refuses the unknown certificate and stops with a failure. That is a safe failure, not a fault.
 
 ## Start command
 
@@ -57,6 +58,10 @@ The engine writes its log to standard error, one JSON object per line, with no p
 ```
 mkdir -p ~/market-data-run
 tmux new -s mdrun
+bash
+. ~/.config/nvm/nvm.sh
+nvm use 22.23.2
+node --version
 cd ~/trading-platform
 npm run build
 set -a
@@ -67,6 +72,7 @@ systemd-inhibit --what=sleep:idle:handle-lid-switch --why="market data run" node
 echo ${PIPESTATUS[0]}
 ```
 
+The `bash` line matters: Kali's default shell is zsh, which does not understand `${PIPESTATUS[0]}`, and nvm is loaded only for zsh unless you load it by hand as shown. `node --version` must print `v22.23.2` before you go on.
 Write down the UTC time the `date -u` line printed. This is `RUN_START` for the queries below. Detach from tmux with Ctrl-b then d, and reattach with `tmux attach -t mdrun`.
 Stop the engine with Ctrl-c in tmux. The engine stops cleanly and exits 0. The line after the command prints the engine's exit code: 0 is a clean stop, 1 a failure, 3 another engine holds the lock, 70 the lock was lost.
 
